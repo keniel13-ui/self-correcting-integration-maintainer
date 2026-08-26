@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { ARTIFACT, parseTimeout, validateReceipt } from './prerequisites.mjs';
 import { spawnSync } from 'node:child_process';
 import { describeCatalog } from './catalog.mjs';
+import { describeProviders } from './providers.mjs';
 
 const baseUrl = process.env.TRUEFORGE_BASE_URL ?? 'http://127.0.0.1:8790';
 const timeout = parseTimeout(process.env.SMOKE_TIMEOUT_MS);
@@ -99,12 +100,15 @@ try {
 async function providerConfigured(path) {
   try {
     const { json, text } = await read(path);
-    if (json === null) return { configured: false, observation: 'NON_JSON_RESPONSE', body: text.slice(0, 80) };
-    return { configured: true, observation: 'CONFIGURED' };
+    if (json === null) {
+      return { configured: false, entry_count: 0, observation: 'NON_JSON_RESPONSE', body: text.slice(0, 80) };
+    }
+    return describeProviders(json);
   } catch (error) {
     const notFound = /returned 404/.test(error.message);
     return {
       configured: false,
+      entry_count: 0,
       observation: notFound ? 'NONE_CONFIGURED' : 'UNREACHABLE',
       detail: error.message.slice(0, 120),
     };
@@ -135,6 +139,10 @@ const allProviders = Object.values(providers).every(p => p.configured);
     catalogs,
     providers_configured_in_trueforge: providers,
     not_proven: [
+      // Kairos's wording guard: a configured provider proves that stored
+      // configuration exists. It does not prove the stored credential works.
+      // Only a live model turn and a live sandbox execution establish that.
+      'that any configured credential is valid or usable',
       'that a model can complete a turn',
       'that an MCP tool can be called',
       'that code can execute in a Daytona sandbox',
