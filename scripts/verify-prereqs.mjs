@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { writeFileSync, rmSync } from 'node:fs';
 import {
   ARTIFACT,
+  CANONICAL_DECIDING_FIELDS,
   decide,
   nodeMeetsMinimum,
   observeEnv,
@@ -32,32 +33,34 @@ const checks = {
 const MODEL_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'];
 const credentials = [...MODEL_KEYS, 'DAYTONA_API_KEY'].map(name => observeEnv(name));
 
-// Re-review finding: credentials were reported and excluded from every verdict,
-// so nothing in the pipeline could ever block on a missing one. They are deciding
-// fields now. A local run that cannot reach a model is not "prereqs ok" — it is
-// blocked, and it says which credential blocked it.
-checks.model_credential = {
-  observed: credentials.some(c => MODEL_KEYS.includes(c.name) && c.set),
-  candidates: MODEL_KEYS,
-};
-checks.sandbox_credential = {
-  observed: credentials.find(c => c.name === 'DAYTONA_API_KEY')?.set === true,
-};
-
-const verdict = decide(checks, ['node', 'trueforge', 'sdk', 'model_credential', 'sandbox_credential']);
+// Re-review finding: making credentials deciding fields here rejected a correctly
+// configured installation, because TrueForge's documented setup puts provider
+// credentials in its own settings, which this process cannot see — it runs before
+// the harness is up. Environment absence is therefore not evidence of absence.
+//
+// So this stage no longer claims anything about credentials. It claims only what a
+// process with no network and no harness can observe. Credential authority moves to
+// the smoke stage, which asks TrueForge's settings API, the one surface that knows.
+const verdict = decide(checks, CANONICAL_DECIDING_FIELDS);
 
 const report = {
   ...verdict,
   generated_at: Date.now(),
-  claim: 'This process observed the local Node runtime, package resolution, and whether a model and sandbox credential exist in this environment. Nothing else.',
+  claim: 'This process observed the local Node runtime and package resolution. Nothing else. It makes no claim about credentials, because TrueForge may hold them in its own settings where this process cannot see them.',
   checks,
 
-  // Raw observations behind the model_credential / sandbox_credential verdicts.
-  // Kept as evidence, not as the decision: presence in the environment is what
-  // was observed; usability is not, and stays in not_proven.
-  credentials_observed_in_env: credentials,
+  // Advisory only, and deliberately not a deciding field. What was observed is
+  // whether these names carry a value in THIS environment. What that cannot
+  // establish is whether a provider is configured, because TrueForge's own
+  // settings are the authority and are not readable from here.
+  credentials_observed_in_env: {
+    observation: credentials,
+    decides_nothing_here: true,
+    authority: 'GET /api/v1/settings/{model-providers,sandbox-providers} on a running TrueForge',
+  },
 
   not_proven: [
+    'that any provider is configured in TrueForge',
     'that any credential is valid or usable',
     'that TrueForge holds provider configuration',
     'that a model can complete a turn',

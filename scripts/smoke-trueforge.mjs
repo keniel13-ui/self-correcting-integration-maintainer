@@ -68,8 +68,14 @@ const readJson = async path => {
 
 try {
   const health = await read('/healthz');
-  // Observed contract: 200 with plain-text "OK!".
-  const healthy = health.text.trim().toUpperCase().startsWith('OK');
+  // Observed contract, measured against TrueForge 0.1.4 on 2026-08-26: HTTP 200
+  // with the exact plain-text body "OK!". Re-review finding: startsWith('OK')
+  // also accepts "OK-ish", "OKAY BUT DEGRADED", and any body that happens to
+  // begin with those two characters, which is a looser claim than what was
+  // observed. Match what was measured; a different body is a contract change and
+  // should fail loudly rather than pass quietly.
+  const HEALTH_BODY = 'OK!';
+  const healthy = health.text.trim() === HEALTH_BODY;
   if (!healthy) {
     throw new Error(`TrueForge health body was ${JSON.stringify(health.text.slice(0, 80))}`);
   }
@@ -85,16 +91,49 @@ try {
     )
   );
 
-  const allPopulated = Object.values(catalogs).every(c => c.has_entries);
+  // Credential authority lives HERE, not in verify-prereqs. This stage can ask the
+// one surface that knows whether a provider is actually configured, including
+// credentials entered through the TrueForge UI that no environment variable
+// reflects. A 404 from these endpoints is TrueForge reporting "nothing configured",
+// which is a real observation, not an inability to observe.
+async function providerConfigured(path) {
+  try {
+    const { json, text } = await read(path);
+    if (json === null) return { configured: false, observation: 'NON_JSON_RESPONSE', body: text.slice(0, 80) };
+    return { configured: true, observation: 'CONFIGURED' };
+  } catch (error) {
+    const notFound = /returned 404/.test(error.message);
+    return {
+      configured: false,
+      observation: notFound ? 'NONE_CONFIGURED' : 'UNREACHABLE',
+      detail: error.message.slice(0, 120),
+    };
+  }
+}
+
+const providers = {
+  model: await providerConfigured('/api/v1/settings/model-providers'),
+  sandbox: await providerConfigured('/api/v1/settings/sandbox-providers'),
+};
+
+const allPopulated = Object.values(catalogs).every(c => c.has_entries);
+const allProviders = Object.values(providers).every(p => p.configured);
 
   console.log(JSON.stringify({
-    status: allPopulated ? 'TRUEFORGE_CATALOGS_POPULATED' : 'TRUEFORGE_REACHABLE_CATALOGS_INCOMPLETE',
+    status: allPopulated && allProviders
+    ? 'TRUEFORGE_READY'
+    : allPopulated ? 'TRUEFORGE_CATALOGS_POPULATED_PROVIDERS_MISSING' : 'TRUEFORGE_REACHABLE_CATALOGS_INCOMPLETE',
+  deciding: ['catalogs populated', 'model provider configured', 'sandbox provider configured'],
     base_url: baseUrl,
     timeout_ms: TIMEOUT_MS,
     timeout_source: timeout.source,
     receipt_validation: validation.reason,
-    health: { body: health.text.trim(), observed_contract: 'text/plain "OK!"' },
+    health: {
+      body: health.text.trim(),
+      observed_contract: 'HTTP 200, body exactly "OK!", measured against TrueForge 0.1.4 on 2026-08-26',
+    },
     catalogs,
+    providers_configured_in_trueforge: providers,
     not_proven: [
       'that a model can complete a turn',
       'that an MCP tool can be called',
@@ -103,7 +142,7 @@ try {
     ],
   }, null, 2));
 
-  process.exitCode = allPopulated ? 0 : 1;
+  process.exitCode = allPopulated && allProviders ? 0 : 1;
 } catch (error) {
   // Qodo #6 intent: a smoke run terminates deterministically WITH evidence.
   // An uncaught throw prints a stack trace and exits 1 with no structured

@@ -3,8 +3,12 @@ import { accessSync, constants } from 'node:fs';
 export const REQUIRED_NODE = Object.freeze({ major: 22, minor: 14 });
 
 /** Kept here, not in verify-prereqs.mjs, so consumers can name the artifact
- *  without importing a module whose top-level code runs the verification. */
-export const ARTIFACT = 'local-prereqs.json';
+ *  without importing a module whose top-level code runs the verification.
+ *  Overridable via PREREQ_ARTIFACT_PATH. Re-review finding: the end-to-end tests
+ *  spawned the verifier and rmSync'd the real receipt, so running the suite
+ *  destroyed the developer's working state and could delete a receipt another
+ *  process was mid-way through consuming. */
+export const ARTIFACT = process.env.PREREQ_ARTIFACT_PATH || 'local-prereqs.json';
 
 export function parseNodeVersion(version) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(version);
@@ -69,6 +73,16 @@ export function decide(checks, decidingFields) {
   };
 }
 
+/**
+ * The canonical set of deciding fields. This is the constant; a receipt's own
+ * `deciding_fields` array is EVIDENCE OF WHAT IT CLAIMED, never the terms of its
+ * own validation. Re-review finding: validateReceipt recomputed over the list the
+ * receipt supplied, so a receipt carrying failing checks plus `deciding_fields: []`
+ * validated — an empty enumeration read as a pass, one layer inside the fix for
+ * empty enumerations read as passes.
+ */
+export const CANONICAL_DECIDING_FIELDS = Object.freeze(['node', 'trueforge', 'sdk']);
+
 export const RECEIPT_MAX_AGE_MS = 15 * 60 * 1000;
 
 /**
@@ -99,8 +113,20 @@ export function validateReceipt(receipt, currentChecks, now = Date.now()) {
   if (!receipt.checks || !Array.isArray(receipt.deciding_fields)) {
     return { valid: false, reason: 'RECEIPT_MALFORMED' };
   }
-  // Recompute rather than read. A tampered or stale `status` cannot help here.
-  const recomputed = decide(receipt.checks, receipt.deciding_fields);
+  // The receipt does not get to say what it was judged on. Its claimed list is
+  // compared against the constant and must match exactly; then the verdict is
+  // recomputed over the CONSTANT, not over anything the receipt supplied.
+  const claimed = [...receipt.deciding_fields].sort().join(',');
+  const canonical = [...CANONICAL_DECIDING_FIELDS].sort().join(',');
+  if (claimed !== canonical) {
+    return {
+      valid: false,
+      reason: 'DECIDING_FIELDS_MISMATCH',
+      claimed: receipt.deciding_fields,
+      canonical: [...CANONICAL_DECIDING_FIELDS],
+    };
+  }
+  const recomputed = decide(receipt.checks, CANONICAL_DECIDING_FIELDS);
   if (recomputed.status !== 'LOCAL_PREREQS_OK') {
     return { valid: false, reason: 'RECOMPUTED_BLOCKED', blocked_by: recomputed.blocked_by };
   }
