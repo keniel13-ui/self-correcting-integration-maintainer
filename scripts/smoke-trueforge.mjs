@@ -43,21 +43,35 @@ if (!validation.valid) {
 
 // Qodo #6: every request is bounded. A server that accepts a connection and never
 // finishes its response now fails on a deadline instead of stalling the check.
-async function readJson(path) {
+// Contracts below were OBSERVED against TrueForge 0.1.4 on 2026-08-26, not
+// assumed. The previous version called response.json() on every path and checked
+// health.status === 'ok'; /healthz actually returns the plain-text body "OK!",
+// so the check could never have passed against the real harness. It had never
+// been run against one.
+async function read(path) {
   const response = await fetch(new URL(path, baseUrl), {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  const body = await response.json();
+  const text = await response.text();
   if (!response.ok) {
-    throw new Error(`${path} returned ${response.status}: ${JSON.stringify(body)}`);
+    throw new Error(`${path} returned ${response.status}: ${text.slice(0, 200)}`);
   }
-  return body;
+  const contentType = response.headers.get('content-type') ?? '';
+  return contentType.includes('json') ? { json: JSON.parse(text), text } : { json: null, text };
 }
 
+const readJson = async path => {
+  const { json, text } = await read(path);
+  if (json === null) throw new Error(`${path} did not return JSON: ${text.slice(0, 80)}`);
+  return json;
+};
+
 try {
-  const health = await readJson('/healthz');
-  if (health.status !== 'ok') {
-    throw new Error(`TrueForge health status was ${JSON.stringify(health.status)}`);
+  const health = await read('/healthz');
+  // Observed contract: 200 with plain-text "OK!".
+  const healthy = health.text.trim().toUpperCase().startsWith('OK');
+  if (!healthy) {
+    throw new Error(`TrueForge health body was ${JSON.stringify(health.text.slice(0, 80))}`);
   }
 
   const paths = {
@@ -79,7 +93,7 @@ try {
     timeout_ms: TIMEOUT_MS,
     timeout_source: timeout.source,
     receipt_validation: validation.reason,
-    health,
+    health: { body: health.text.trim(), observed_contract: 'text/plain "OK!"' },
     catalogs,
     not_proven: [
       'that a model can complete a turn',
