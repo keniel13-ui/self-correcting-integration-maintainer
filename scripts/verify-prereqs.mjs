@@ -29,26 +29,33 @@ const checks = {
   sdk: resolvePackage('@truefoundry/trueforge-sdk/package.json', require),
 };
 
-const verdict = decide(checks, ['node', 'trueforge', 'sdk']);
+const MODEL_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'];
+const credentials = [...MODEL_KEYS, 'DAYTONA_API_KEY'].map(name => observeEnv(name));
+
+// Re-review finding: credentials were reported and excluded from every verdict,
+// so nothing in the pipeline could ever block on a missing one. They are deciding
+// fields now. A local run that cannot reach a model is not "prereqs ok" — it is
+// blocked, and it says which credential blocked it.
+checks.model_credential = {
+  observed: credentials.some(c => MODEL_KEYS.includes(c.name) && c.set),
+  candidates: MODEL_KEYS,
+};
+checks.sandbox_credential = {
+  observed: credentials.find(c => c.name === 'DAYTONA_API_KEY')?.set === true,
+};
+
+const verdict = decide(checks, ['node', 'trueforge', 'sdk', 'model_credential', 'sandbox_credential']);
 
 const report = {
   ...verdict,
-  claim: 'This process observed the local Node runtime and package resolution. Nothing else.',
+  generated_at: Date.now(),
+  claim: 'This process observed the local Node runtime, package resolution, and whether a model and sandbox credential exist in this environment. Nothing else.',
   checks,
 
-  // Raw observations, deliberately outside the verdict. Whether a credential is
-  // usable, or configured inside the TrueForge UI where this process cannot see
-  // it, is not locally observable — so no readiness claim is made about it.
-  // The previous code emitted 'missing_or_configured_in_trueforge_ui', a
-  // disjunction with no false case (Qodo #2 / D2), and then excluded it from the
-  // verdict anyway (Qodo #1 / D1).
-  credentials_observed_in_env: [
-    'ANTHROPIC_API_KEY',
-    'OPENAI_API_KEY',
-    'GOOGLE_API_KEY',
-    'GEMINI_API_KEY',
-    'DAYTONA_API_KEY',
-  ].map(name => observeEnv(name)),
+  // Raw observations behind the model_credential / sandbox_credential verdicts.
+  // Kept as evidence, not as the decision: presence in the environment is what
+  // was observed; usability is not, and stays in not_proven.
+  credentials_observed_in_env: credentials,
 
   not_proven: [
     'that any credential is valid or usable',
