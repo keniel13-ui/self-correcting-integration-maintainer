@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { canonicalJsonBytes, parseStrictJson } from '../pr2/canonical.mjs';
-import { assertSafePath, sha256 } from '../pr2/inputs.mjs';
+import { sha256 } from '../pr2/inputs.mjs';
 import { loadCorpus } from './core.mjs';
 
 function value(argv, name, fallback) {
@@ -49,13 +49,16 @@ export function recomputeFinding({ corpusRoot, manifestBytes, priorBytes, artifa
 if (process.argv[1]?.endsWith('/recompute.mjs')) {
   const argv = process.argv.slice(2);
   const run = value(argv, 'run');
-  if (!run) throw new TypeError('--run is required');
-  assertSafePath(run, 'run path');
+  if (typeof run !== 'string' || run.length === 0 || run.normalize('NFC') !== run || run.includes('\0')) {
+    throw new TypeError('--run is required and must be an NFC path');
+  }
+  const runRoot = resolve(run);
+  if (!/^judgment-[0-9a-f]{32}$/.test(basename(runRoot))) throw new TypeError('--run id invalid');
   const result = recomputeFinding({
-    corpusRoot: join(run, 'corpus'),
-    manifestBytes: readFileSync(join(run, 'corpus_manifest.json')),
-    priorBytes: readFileSync(join(run, 'PRIOR_KNOWLEDGE.json')),
-    artifactBytes: readFileSync(join(run, 'judgment_run_artifact.json')),
+    corpusRoot: join(runRoot, 'corpus'),
+    manifestBytes: readFileSync(join(runRoot, 'corpus_manifest.json')),
+    priorBytes: readFileSync(join(runRoot, 'PRIOR_KNOWLEDGE.json')),
+    artifactBytes: readFileSync(join(runRoot, 'judgment_run_artifact.json')),
     findingId: value(argv, 'finding'),
   });
   process.stdout.write(canonicalJsonBytes(result));

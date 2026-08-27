@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonicalJsonBytes } from '../pr2/canonical.mjs';
-import { assertSafePath, sha256 } from '../pr2/inputs.mjs';
+import { sha256 } from '../pr2/inputs.mjs';
 import {
   AGENT_CAPABILITIES,
   AGENT_CAPABILITY_MANIFEST_SHA256,
@@ -54,11 +54,10 @@ export async function executeJudgmentLoop({
 }) {
   if (typeof repoRoot !== 'string' || repoRoot.length === 0) throw new TypeError('repoRoot is required');
   if (!/^judgment-[0-9a-f]{32}$/.test(runId)) throw new TypeError('runId invalid');
-  const runDir = join(runsRoot, runId);
-  const recomputeRunPath = assertSafePath(relative(repoRoot, runDir), 'recompute run path');
-  if (!/^[A-Za-z0-9._/-]+$/.test(recomputeRunPath)) {
-    throw new TypeError('recompute run path is not shell-safe');
-  }
+  const absoluteRepoRoot = resolve(repoRoot);
+  const runDir = resolve(runsRoot, runId);
+  const insideRepo = runDir.startsWith(`${absoluteRepoRoot}${sep}`);
+  const recomputeRunPath = insideRepo ? relative(absoluteRepoRoot, runDir) : runDir;
   const corpus = loadCorpus({ corpusRoot, manifestBytes });
   const expectedHashes = {
     instructions_sha256: instructionSha256(),

@@ -162,10 +162,11 @@ function observedLine(text, offset) {
 }
 
 export function validateAgentResponse(text, { corpus, priorSha256, knownIds, recomputeRunPath }) {
-  assertSafePath(recomputeRunPath, 'recompute run path');
-  if (!/^[A-Za-z0-9._/-]+$/.test(recomputeRunPath)) {
-    throw new TypeError('recompute run path is not shell-safe');
+  if (typeof recomputeRunPath !== 'string' || recomputeRunPath.length === 0 ||
+      recomputeRunPath.normalize('NFC') !== recomputeRunPath || /[\0\r\n]/.test(recomputeRunPath)) {
+    throw new TypeError('recompute run path invalid');
   }
+  const quotedRunPath = `'${recomputeRunPath.replaceAll("'", `'"'"'`)}'`;
   const response = parseStrictJson(text);
   assertClosedObject(response, RESPONSE_KEYS, 'judgment response');
   if (response.schema !== 'judgment_response/v1' || !Array.isArray(response.findings)) {
@@ -234,7 +235,7 @@ export function validateAgentResponse(text, { corpus, priorSha256, knownIds, rec
         prior_knowledge_sha256: priorSha256,
       }])],
       recompute_command:
-        `node scripts/judgment/recompute.mjs --run ${recomputeRunPath} --finding ${findingId}`,
+        `node scripts/judgment/recompute.mjs --run ${quotedRunPath} --finding ${findingId}`,
       novelty: raw.novelty,
       prior_knowledge_sha: priorSha256,
       confidence_basis: raw.confidence_basis,

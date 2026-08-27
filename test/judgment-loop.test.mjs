@@ -320,7 +320,7 @@ test('J10 recomputation rejects model assertion and re-derives bytes, count, lin
   const artifactBytes = readFileSync(join(result.run_dir, 'judgment_run_artifact.json'));
   assert.equal(
     JSON.parse(artifactBytes).findings[0].recompute_command,
-    'node scripts/judgment/recompute.mjs --run docs/demo/runs/judgment-11111111111111111111111111111111 --finding F-001',
+    "node scripts/judgment/recompute.mjs --run 'docs/demo/runs/judgment-11111111111111111111111111111111' --finding F-001",
   );
   const recomputed = recomputeFinding({
     corpusRoot: join(result.run_dir, 'corpus'),
@@ -337,6 +337,30 @@ test('J10 recomputation rejects model assertion and re-derives bytes, count, lin
     '--run', relative(repoRoot, result.run_dir),
     '--finding', 'F-001',
   ], { cwd: repoRoot, encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.equal(JSON.parse(cli.stdout).status, 'RECOMPUTED');
+});
+
+test('J10b external run roots produce an executable, safely quoted recompute command', async () => {
+  const s = findingState();
+  const repoRoot = mkdtempSync(join(tmpdir(), 'judgment-repo-'));
+  const runs = mkdtempSync(join(tmpdir(), "judgment external root's "));
+  const result = await executeJudgmentLoop({
+    corpusRoot: s.f.root,
+    manifestBytes: s.f.manifestBytes,
+    priorBytes: s.f.priorBytes,
+    repoRoot,
+    runsRoot: runs,
+    runId: 'judgment-22222222222222222222222222222222',
+    runModel: async () => ({ content: response(), usage: null }),
+    verifyCandidate: async ({ prepared }) => successVerification(prepared),
+  });
+  const artifact = JSON.parse(readFileSync(join(result.run_dir, 'judgment_run_artifact.json')));
+  const projectRoot = dirname(dirname(new URL(import.meta.url).pathname));
+  const cli = spawnSync('/bin/sh', ['-c', artifact.findings[0].recompute_command], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  });
   assert.equal(cli.status, 0, cli.stderr);
   assert.equal(JSON.parse(cli.stdout).status, 'RECOMPUTED');
 });
