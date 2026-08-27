@@ -27,6 +27,19 @@ async function observeEvents(client, sessionId, turnId, sleep, attempts) {
   return { observed: false, events: [] };
 }
 
+async function observeSessionEventsForCleanup(client, sessionId, turnId, sleep, attempts) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const events = await client.listSessionEventsForTurn(sessionId, turnId, 5_000);
+      if (!Array.isArray(events)) throw new BoundedHttpError('SESSION_EVENTS_SHAPE_INVALID');
+      return { observed: true, events };
+    } catch {
+      if (attempt + 1 < attempts) await sleep(100);
+    }
+  }
+  return { observed: false, events: [] };
+}
+
 export function daytonaCleanupProvider({
   apiKey = process.env.DAYTONA_API_KEY,
   baseUrl = 'https://app.daytona.io',
@@ -91,6 +104,7 @@ export async function executePreparedSurface({
   let turnStatus = 'error';
   let events = [];
   let eventsObserved = false;
+  let cleanupOwnershipObserved = false;
   let turnMayExistWithoutId = false;
   let turnRequestStarted = false;
   let phase = 'provider';
@@ -153,18 +167,32 @@ export async function executePreparedSurface({
         }
         events = observation.events;
         eventsObserved = observation.observed;
+        let cleanupEvents = events;
+        cleanupOwnershipObserved = eventsObserved;
+        if (!cleanupOwnershipObserved) {
+          const fallback = await observeSessionEventsForCleanup(
+            client,
+            sessionId,
+            turnId,
+            sleep,
+            2,
+          );
+          cleanupEvents = fallback.events;
+          cleanupOwnershipObserved = fallback.observed;
+        }
+        const ownedIds = createdSandboxIds(cleanupEvents);
+        cleanup = await cleanupSandboxes({
+          createdIds: ownedIds,
+          deleteSandbox: cleanupProvider.deleteSandbox,
+          observeAbsent: cleanupProvider.observeAbsent,
+          checkedAtUtc: now,
+        });
       }
-      const ownedIds = createdSandboxIds(events);
-      cleanup = await cleanupSandboxes({
-        createdIds: ownedIds,
-        deleteSandbox: cleanupProvider.deleteSandbox,
-        observeAbsent: cleanupProvider.observeAbsent,
-        checkedAtUtc: now,
-      });
     }
   }
 
-  if ((sessionId && turnId && !eventsObserved) || turnMayExistWithoutId) {
+  if ((sessionId && turnId && (!cleanupOwnershipObserved || cleanup.unconfirmed_ids.length > 0)) ||
+      turnMayExistWithoutId) {
     preflight.push('CLEANUP_UNCONFIRMED');
   }
 

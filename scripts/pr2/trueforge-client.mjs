@@ -116,6 +116,35 @@ export class TrueForgeClient {
     return data;
   }
 
+  async listSessionEventsForTurn(sessionId, turnId, timeoutMs = 5_000) {
+    const query = new URLSearchParams({ last_turn_id: turnId, limit: '100' });
+    const body = await this.request(
+      'GET',
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/events?${query.toString()}`,
+      undefined,
+      timeoutMs,
+    );
+    const data = body?.data;
+    if (!Array.isArray(data)) throw new BoundedHttpError('SESSION_EVENTS_SHAPE_INVALID');
+    const pagination = body?.pagination;
+    if (pagination === null || typeof pagination !== 'object' || Array.isArray(pagination)) {
+      throw new BoundedHttpError('SESSION_EVENTS_SHAPE_INVALID');
+    }
+    if (pagination.next_page_token !== undefined && pagination.next_page_token !== null) {
+      throw new BoundedHttpError('SESSION_EVENTS_PAGINATION_UNEXPECTED');
+    }
+    const events = [];
+    for (const item of data) {
+      if (item === null || typeof item !== 'object' || Array.isArray(item) ||
+          typeof item.turn_id !== 'string' || item.event === null ||
+          typeof item.event !== 'object' || Array.isArray(item.event)) {
+        throw new BoundedHttpError('SESSION_EVENTS_SHAPE_INVALID');
+      }
+      if (item.turn_id === turnId) events.push(item.event);
+    }
+    return events;
+  }
+
   async cancelSession(sessionId) {
     try {
       await this.request('POST', `/api/v1/sessions/${encodeURIComponent(sessionId)}/cancel`, {});

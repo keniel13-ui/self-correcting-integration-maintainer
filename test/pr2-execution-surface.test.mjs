@@ -325,6 +325,7 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
 
   const outage = prepared('event-outage');
   let outageCancellations = 0;
+  let outageDeleted = 0;
   const outageEvidence = await executePreparedSurface({
     repoRoot,
     prepared: outage,
@@ -334,9 +335,18 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
       createTurn: async () => 'turn',
       getTurn: async () => ({ state: { status: 'done' } }),
       listEvents: async () => ({ malformed: 'not-an-event-array' }),
+      listSessionEventsForTurn: async () => [
+        { type: 'sandbox.created', sandbox_id: sandboxId },
+      ],
       cancelSession: async () => { outageCancellations += 1; },
     },
-    cleanupProvider: { deleteSandbox: async () => {}, observeAbsent: async () => false },
+    cleanupProvider: {
+      deleteSandbox: async id => {
+        assert.equal(id, sandboxId);
+        outageDeleted += 1;
+      },
+      observeAbsent: async id => id === sandboxId,
+    },
     observations: {
       baseCommit: BASE_COMMIT, packageSha256: PACKAGE_SHA256, lockSha256: LOCK_SHA256,
       trueforgeVersion: TRUEFORGE_VERSION, sdkVersion: SDK_VERSION,
@@ -344,8 +354,47 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
     },
     sleep: async () => {},
   });
-  assert.ok(outageEvidence.failure_reasons.includes('CLEANUP_UNCONFIRMED'));
+  assert.equal(outageEvidence.status, 'NOT_ESTABLISHED');
+  assert.ok(outageEvidence.failure_reasons.includes('SANDBOX_EVENT_CARDINALITY_INVALID'));
+  assert.equal(outageEvidence.failure_reasons.includes('CLEANUP_UNCONFIRMED'), false);
+  assert.deepEqual(outageEvidence.cleanup.confirmed_absent_ids, [sandboxId]);
+  assert.equal(outageDeleted, 1);
   assert.ok(outageCancellations >= 1);
+
+  const requestedUrls = [];
+  const fallbackClient = new TrueForgeClient({
+    fetchImpl: async url => {
+      requestedUrls.push(String(url));
+      return new Response(JSON.stringify({
+        data: [
+          { turn_id: 'unrelated-turn', event: { type: 'sandbox.created', sandbox_id: 'unrelated' } },
+          { turn_id: 'turn', event: { type: 'sandbox.created', sandbox_id: sandboxId } },
+        ],
+        pagination: {},
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  assert.deepEqual(
+    await fallbackClient.listSessionEventsForTurn('session', 'turn'),
+    [{ type: 'sandbox.created', sandbox_id: sandboxId }],
+  );
+  assert.match(requestedUrls[0], /\/sessions\/session\/events\?last_turn_id=turn&limit=100$/);
+
+  for (const body of [
+    { data: {}, pagination: {} },
+    { data: [], pagination: null },
+    { data: [], pagination: { next_page_token: 'more' } },
+    { data: [{ turn_id: 'turn', event: null }], pagination: {} },
+  ]) {
+    const malformedClient = new TrueForgeClient({
+      fetchImpl: async () => new Response(JSON.stringify(body), { status: 200 }),
+    });
+    await assert.rejects(
+      malformedClient.listSessionEventsForTurn('session', 'turn'),
+      error => error instanceof BoundedHttpError &&
+        ['SESSION_EVENTS_SHAPE_INVALID', 'SESSION_EVENTS_PAGINATION_UNEXPECTED'].includes(error.code),
+    );
+  }
 });
 
 test('T15 cleanup dedupes exact run IDs and rejects unrelated or wildcard targets', async () => {
