@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/keniel13-ui/self-correcting-integration-maintainer/blob/main/docs/contracts/change-proposal-v1.schema.json",
+  "title": "ChangeProposal v1",
+  "description": "A sandbox-verified exact-byte replacement that remains structurally pending human approval. This schema cannot represent an applied change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "proposal_id",
+    "finding_id",
+    "corpus_manifest_sha256",
+    "target",
+    "change",
+    "verification",
+    "authority",
+    "not_established"
+  ],
+  "properties": {
+    "schema": { "const": "change_proposal/v1" },
+    "proposal_id": { "type": "string", "pattern": "^CP-[A-Z0-9][A-Z0-9_-]{2,63}$" },
+    "finding_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "corpus_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "original_sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "original_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "before_exact", "after_exact", "replacement_sha256"],
+      "properties": {
+        "operation": { "const": "REPLACE_EXACT_BYTES" },
+        "before_exact": { "type": "string", "minLength": 1, "maxLength": 32768 },
+        "after_exact": { "type": "string", "maxLength": 32768 },
+        "replacement_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "execution_evidence_sha256",
+        "command_manifest_sha256",
+        "exit_code",
+        "result_sha256"
+      ],
+      "properties": {
+        "status": { "const": "VERIFIED_IN_DAYTONA" },
+        "execution_evidence_sha256": { "$ref": "#/$defs/sha256" },
+        "command_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "exit_code": { "const": 0 },
+        "result_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "approval_required", "apply_capability_exposed_to_agent", "applied"],
+      "properties": {
+        "state": { "const": "AWAITING_HUMAN_APPROVAL" },
+        "approval_required": { "const": true },
+        "apply_capability_exposed_to_agent": { "const": false },
+        "applied": { "const": false }
+      }
+    },
+    "not_established": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}
