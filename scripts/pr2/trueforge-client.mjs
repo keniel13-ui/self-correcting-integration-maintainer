@@ -106,12 +106,14 @@ export class TrueForgeClient {
   }
 
   async listEvents(sessionId, turnId, timeoutMs = 5_000) {
-    return (await this.request(
+    const data = (await this.request(
       'GET',
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/events`,
       undefined,
       timeoutMs,
-    ))?.data ?? [];
+    ))?.data;
+    if (!Array.isArray(data)) throw new BoundedHttpError('EVENTS_SHAPE_INVALID');
+    return data;
   }
 
   async cancelSession(sessionId) {

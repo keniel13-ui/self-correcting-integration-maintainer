@@ -17,7 +17,9 @@ function wait(ms) {
 async function observeEvents(client, sessionId, turnId, sleep, attempts) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      return { observed: true, events: await client.listEvents(sessionId, turnId, 5_000) };
+      const events = await client.listEvents(sessionId, turnId, 5_000);
+      if (!Array.isArray(events)) throw new BoundedHttpError('EVENTS_SHAPE_INVALID');
+      return { observed: true, events };
     } catch {
       if (attempt + 1 < attempts) await sleep(100);
     }

@@ -333,7 +333,7 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
       createSession: async () => 'session',
       createTurn: async () => 'turn',
       getTurn: async () => ({ state: { status: 'done' } }),
-      listEvents: async () => { throw new BoundedHttpError('UNAVAILABLE'); },
+      listEvents: async () => ({ malformed: 'not-an-event-array' }),
       cancelSession: async () => { outageCancellations += 1; },
     },
     cleanupProvider: { deleteSandbox: async () => {}, observeAbsent: async () => false },
