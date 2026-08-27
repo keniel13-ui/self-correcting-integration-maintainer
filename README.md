@@ -78,15 +78,30 @@ variables, which is the only surface that sees credentials entered through the U
 It establishes that stored configuration exists. **It does not establish that any credential
 works.** Only a live model turn and a live sandbox execution do that. Both are proven separately:
 
-| Link | Evidence |
-|---|---|
-| TrueForge boots | `/healthz` returns the plain-text body `OK!` |
-| A model completes a turn | `state.status: done`, 106 ms, Haiku 4.5 |
-| A real MCP tool executes | `tool_info.type: mcp`, server `deepwiki`, matching `tool.response` |
-| Code runs in Daytona | `sandbox.created`, `truefoundry-system/exec`, `exitCode: 0`, `result: "323\n"` |
+| Link | Evidence | Record |
+|---|---|---|
+| TrueForge boots | `/healthz` returns the plain-text body `OK!` | [`SUBSTRATE_RUN_LOG`](docs/freezes/SUBSTRATE_RUN_LOG_2026-08-26.md) |
+| A model completes a turn | `state.status: done`, 106 ms, Haiku 4.5 | same |
+| A real MCP tool executes | `tool_info.type: mcp`, server `deepwiki`, matching `tool.response` | same |
+| Code runs in Daytona | `sandbox.created`, `truefoundry-system/exec`, `exitCode: 0`, `result: "323\n"` | [`LINK4_STOCK_DELTA`](docs/freezes/HACKATHON_SUBSTRATE_LINK4_STOCK_DELTA_KAIROS_2026-08-26.md) + [raw run](docs/freezes/link4-stock-run-artifact.txt) |
 
 All four were measured against **unmodified TrueForge 0.1.4**. No compatibility patch is shipped
 or required.
+
+> **Read the Daytona row against the run log, because they disagree and the disagreement is the
+> point.** [`SUBSTRATE_RUN_LOG_2026-08-26.md`](docs/freezes/SUBSTRATE_RUN_LOG_2026-08-26.md)
+> records link 4 as **BLOCKED**, and it was, at the time it was written: TrueForge returned
+> `422 "Daytona rejected the API key"` against a key that could create and delete sandboxes.
+>
+> The cause was that the key lacked Daytona's separate `write:snapshots` permission, which
+> TrueForge 0.1.4 reports as an invalid key. Filed upstream as
+> [#461](https://github.com/truefoundry/trueforge/issues/461). A correctly scoped key was issued
+> and the link was proven on stock TrueForge afterwards.
+>
+> **The earlier log is not edited.** It is a frozen record of what was true when it was written,
+> superseded by a later delta rather than rewritten. The raw run output is committed verbatim at
+> `docs/freezes/link4-stock-run-artifact.txt`, SHA-256 `c2e535fa…`, and carries the session id,
+> turn id, sandbox id, tool call, and `exitCode: 0`.
 
 ## Build discipline
 
