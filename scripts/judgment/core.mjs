@@ -11,6 +11,8 @@ import {
   MAX_CORPUS_BYTES,
   MAX_FILE_BYTES,
   MAX_FILES,
+  MAX_REPLACEMENT_BYTES,
+  PROMPT_FRAME,
   SYSTEM_INSTRUCTIONS,
   TOOL_DESCRIPTIONS,
 } from './constants.mjs';
@@ -115,7 +117,10 @@ export function validatePriorKnowledge(bytes, expected = {}) {
 }
 
 export function instructionSha256() {
-  return sha256(Buffer.from(SYSTEM_INSTRUCTIONS, 'utf8'));
+  return sha256(canonicalJsonBytes({
+    system: SYSTEM_INSTRUCTIONS,
+    user_prompt_frame: PROMPT_FRAME,
+  }));
 }
 
 export function toolsSha256() {
@@ -125,20 +130,19 @@ export function toolsSha256() {
 export function buildAgentPrompt(corpus, prior) {
   const known = prior.known_conditions.map(({ id, name, description }) => ({ id, name, description }));
   const files = corpus.files.map(({ path, text, sha256: digest }) => ({ path, sha256: digest, bytes: text }));
-  const prompt = [
-    'A human uses this integration code and needs an evidence-backed maintenance proposal.',
-    'Inspect the supplied corpus without assuming a particular condition.',
-    'Return this closed JSON shape:',
-    '{"schema":"judgment_response/v1","findings":[{"condition":"...","path":"...","exact_bytes":"...","why_it_matters":"...","evidence":["..."],"novelty":"NEW|CONFIRMS_KNOWN|CHANGES_KNOWN","known_condition_id":"K1 or null","confidence_basis":"...","not_established":["..."],"repair":{"before_exact":"...","after_exact":"..."} or null}]}',
-    'If no condition is supported, return findings:[]. Do not call that CLEAN.',
+  const frame = PROMPT_FRAME;
+  // The contract bars the harness from pointing at an answer with these words. Corpus bytes and
+  // frozen prior-knowledge descriptions are evidence, not harness-authored framing, and may
+  // legitimately contain them.
+  if (/\b(?:bug|defect|vulnerability)s?\b/i.test(frame.join('\n'))) {
+    throw new TypeError('harness framing contains a withheld answer word');
+  }
+  return [
+    ...frame,
     `Known conditions: ${JSON.stringify(known)}`,
     `Corpus manifest SHA-256: ${corpus.manifestSha256}`,
     `Corpus files: ${JSON.stringify(files)}`,
   ].join('\n');
-  if (/\b(?:bug|defect|vulnerability)s?\b/i.test(prompt)) {
-    throw new TypeError('prompt contains a withheld answer word');
-  }
-  return prompt;
 }
 
 function occurrenceOffsets(haystack, needle) {
@@ -157,7 +161,11 @@ function observedLine(text, offset) {
   return text.slice(0, offset).split('\n').length;
 }
 
-export function validateAgentResponse(text, { corpus, priorSha256, knownIds }) {
+export function validateAgentResponse(text, { corpus, priorSha256, knownIds, recomputeRunPath }) {
+  assertSafePath(recomputeRunPath, 'recompute run path');
+  if (!/^[A-Za-z0-9._/-]+$/.test(recomputeRunPath)) {
+    throw new TypeError('recompute run path is not shell-safe');
+  }
   const response = parseStrictJson(text);
   assertClosedObject(response, RESPONSE_KEYS, 'judgment response');
   if (response.schema !== 'judgment_response/v1' || !Array.isArray(response.findings)) {
@@ -196,6 +204,13 @@ export function validateAgentResponse(text, { corpus, priorSha256, knownIds }) {
       if (typeof raw.repair.after_exact !== 'string' || raw.repair.after_exact === raw.repair.before_exact) {
         throw new TypeError('repair after bytes invalid');
       }
+      const afterBytes = Buffer.byteLength(raw.repair.after_exact, 'utf8');
+      const resultingFileBytes = file.bytes.length - Buffer.byteLength(raw.repair.before_exact, 'utf8') + afterBytes;
+      const corpusBytes = corpus.files.reduce((total, item) => total + item.bytes.length, 0) -
+        file.bytes.length + resultingFileBytes;
+      if (afterBytes > MAX_REPLACEMENT_BYTES || resultingFileBytes > MAX_FILE_BYTES || corpusBytes > MAX_CORPUS_BYTES) {
+        throw new TypeError('repair replacement exceeds byte bounds');
+      }
       repair = structuredClone(raw.repair);
     }
     const findingId = `F-${String(index + 1).padStart(3, '0')}`;
@@ -218,7 +233,8 @@ export function validateAgentResponse(text, { corpus, priorSha256, knownIds }) {
         known_condition_id: known,
         prior_knowledge_sha256: priorSha256,
       }])],
-      recompute_command: `node scripts/judgment/recompute.mjs --finding ${findingId}`,
+      recompute_command:
+        `node scripts/judgment/recompute.mjs --run ${recomputeRunPath} --finding ${findingId}`,
       novelty: raw.novelty,
       prior_knowledge_sha: priorSha256,
       confidence_basis: raw.confidence_basis,

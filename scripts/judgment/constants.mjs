@@ -10,6 +10,7 @@ export const MAX_FILES = 32;
 // base64). This ceiling keeps the final printable exec command below PR #3's 65,535-byte bound.
 export const MAX_FILE_BYTES = 30_000;
 export const MAX_CORPUS_BYTES = 30_000;
+export const MAX_REPLACEMENT_BYTES = 8_192;
 export const MAX_MODEL_TURN_MS = 60_000;
 export const MAX_SANDBOX_TURN_MS = 60_000;
 
@@ -19,6 +20,15 @@ For every finding, quote exact bytes from one supplied file. Never provide a lin
 harness computes it. State a concrete consequence, the evidence you inspected, an honest novelty
 class, a prose confidence basis, at least one limit, and at most one bounded exact-byte repair.
 You have no tools and no authority to modify any repository. A proposal is not approval.`;
+
+export const PROMPT_FRAME = Object.freeze([
+  'A human uses this integration code and needs an evidence-backed maintenance proposal.',
+  'Inspect the supplied corpus without assuming a particular condition.',
+  'Return this closed JSON shape:',
+  '{"schema":"judgment_response/v1","findings":[{"condition":"...","path":"...","exact_bytes":"...","why_it_matters":"...","evidence":["..."],"novelty":"NEW|CONFIRMS_KNOWN|CHANGES_KNOWN","known_condition_id":"K1 or null","confidence_basis":"...","not_established":["..."],"repair":{"before_exact":"...","after_exact":"..."} or null}]}',
+  'If no condition is supported, return findings:[]. Do not call that CLEAN.',
+  `A repair after_exact value must be at most ${MAX_REPLACEMENT_BYTES} UTF-8 bytes.`,
+]);
 
 export const TOOL_DESCRIPTIONS = Object.freeze([]);
 

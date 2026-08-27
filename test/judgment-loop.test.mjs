@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { canonicalJson, canonicalJsonBytes } from '../scripts/pr2/canonical.mjs';
 import { sha256 } from '../scripts/pr2/inputs.mjs';
 import { prepareCandidateVerification } from '../scripts/judgment/candidate.mjs';
@@ -34,6 +35,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'judgment-corpus-'));
   const path = 'src/check.mjs';
   const text = [
+    '// bug tracking label is ordinary source text',
     'export function decide(report) {',
     '  const ok = report.node && report.packages;',
     '  return { ok, credentials: report.credentials };',
@@ -60,7 +62,7 @@ function fixture() {
     known_conditions: [{
       id: 'K5',
       name: 'signal nobody consumes',
-      description: 'A computed signal is not consumed by the deciding path.',
+      description: 'A known defect class where a computed signal is not consumed by the deciding path.',
     }],
   };
   return { root, text, manifest, manifestBytes, prior, priorBytes: canonicalJsonBytes(prior) };
@@ -104,6 +106,7 @@ function findingState() {
     corpus: s.corpus,
     priorSha256: s.priorState.priorSha256,
     knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-00000000000000000000000000000000',
   });
   const prepared = prepareCandidateVerification({ corpus: s.corpus, finding });
   return { ...s, finding, prepared };
@@ -185,6 +188,8 @@ test('J03 prompt contains every corpus file and no model tools', () => {
   const prompt = buildAgentPrompt(s.corpus, s.priorState.prior);
   assert.match(prompt, /src\/check\.mjs/);
   assert.match(prompt, /report\.credentials/);
+  assert.match(prompt, /bug tracking label/);
+  assert.match(prompt, /known defect class/i);
   assert.deepEqual(TOOL_DESCRIPTIONS, []);
   assert.ok(AGENT_CAPABILITIES.denied.includes('apply_change'));
   assert.doesNotMatch(SYSTEM_INSTRUCTIONS, /READY_LOCAL/);
@@ -192,7 +197,7 @@ test('J03 prompt contains every corpus file and no model tools', () => {
 
 test('J04 line and exact-byte evidence are computed by the harness', () => {
   const s = findingState();
-  assert.equal(s.finding.observed.line, 2);
+  assert.equal(s.finding.observed.line, 3);
   assert.equal(s.finding.evidence[0].occurrence_count, 1);
   assert.equal(s.finding.proposed_action, 'CP-001');
   assert.equal(Object.hasOwn(s.finding.observed, 'model_line'), false);
@@ -202,16 +207,27 @@ test('J05 ambiguous bytes, bare confidence, empty limits, and false novelty refe
   const s = state();
   assert.throws(() => validateAgentResponse(response({ exact_bytes: 'report' }), {
     corpus: s.corpus, priorSha256: s.priorState.priorSha256, knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-00000000000000000000000000000000',
   }), /exact bytes/);
   assert.throws(() => validateAgentResponse(response({ confidence_basis: '95%' }), {
     corpus: s.corpus, priorSha256: s.priorState.priorSha256, knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-00000000000000000000000000000000',
   }), /bare number/);
   assert.throws(() => validateAgentResponse(response({ not_established: [] }), {
     corpus: s.corpus, priorSha256: s.priorState.priorSha256, knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-00000000000000000000000000000000',
   }), /nonempty/);
   assert.throws(() => validateAgentResponse(response({ novelty: 'NEW' }), {
     corpus: s.corpus, priorSha256: s.priorState.priorSha256, knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-00000000000000000000000000000000',
   }), /must not cite/);
+  assert.throws(() => validateAgentResponse(response({ repair: {
+    before_exact: 'const ok = report.node && report.packages;',
+    after_exact: 'é'.repeat(5_000),
+  } }), {
+    corpus: s.corpus, priorSha256: s.priorState.priorSha256, knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-00000000000000000000000000000000',
+  }), /byte bounds/);
 });
 
 test('J06 exact repair changes only the named file and binds the complete result', () => {
@@ -244,11 +260,13 @@ test('J07 candidate verification requires persisted call, nested response, exit 
 test('J08 proposal schema cannot represent approval or application', () => {
   const s = findingState();
   const verification = successVerification(s.prepared);
-  const runs = mkdtempSync(join(tmpdir(), 'judgment-runs-'));
+  const repoRoot = mkdtempSync(join(tmpdir(), 'judgment-repo-'));
+  const runs = join(repoRoot, 'docs/demo/runs');
   return executeJudgmentLoop({
     corpusRoot: s.f.root,
     manifestBytes: s.f.manifestBytes,
     priorBytes: s.f.priorBytes,
+    repoRoot,
     runsRoot: runs,
     runId: 'judgment-00000000000000000000000000000000',
     now: () => '2026-08-27T15:00:00.000Z',
@@ -268,11 +286,13 @@ test('J08 proposal schema cannot represent approval or application', () => {
 test('J09 empty finding set is NO_FINDINGS, not CLEAN, and writes no artifact', async () => {
   const s = state();
   let verifierCalled = false;
+  const repoRoot = mkdtempSync(join(tmpdir(), 'judgment-empty-'));
   const outcome = await executeJudgmentLoop({
     corpusRoot: s.f.root,
     manifestBytes: s.f.manifestBytes,
     priorBytes: s.f.priorBytes,
-    runsRoot: mkdtempSync(join(tmpdir(), 'judgment-empty-')),
+    repoRoot,
+    runsRoot: join(repoRoot, 'docs/demo/runs'),
     runModel: async () => ({ content: canonicalJson({ schema: 'judgment_response/v1', findings: [] }), usage: null }),
     verifyCandidate: async () => { verifierCalled = true; },
   });
@@ -285,26 +305,40 @@ test('J09 empty finding set is NO_FINDINGS, not CLEAN, and writes no artifact', 
 
 test('J10 recomputation rejects model assertion and re-derives bytes, count, line, and hashes', async () => {
   const s = findingState();
-  const runs = mkdtempSync(join(tmpdir(), 'judgment-recompute-'));
+  const repoRoot = mkdtempSync(join(tmpdir(), 'judgment-recompute-'));
+  const runs = join(repoRoot, 'docs/demo/runs');
   const result = await executeJudgmentLoop({
     corpusRoot: s.f.root,
     manifestBytes: s.f.manifestBytes,
     priorBytes: s.f.priorBytes,
+    repoRoot,
     runsRoot: runs,
     runId: 'judgment-11111111111111111111111111111111',
     runModel: async () => ({ content: response(), usage: null }),
     verifyCandidate: async ({ prepared }) => successVerification(prepared),
   });
   const artifactBytes = readFileSync(join(result.run_dir, 'judgment_run_artifact.json'));
+  assert.equal(
+    JSON.parse(artifactBytes).findings[0].recompute_command,
+    'node scripts/judgment/recompute.mjs --run docs/demo/runs/judgment-11111111111111111111111111111111 --finding F-001',
+  );
   const recomputed = recomputeFinding({
-    corpusRoot: s.f.root,
-    manifestBytes: s.f.manifestBytes,
-    priorBytes: s.f.priorBytes,
+    corpusRoot: join(result.run_dir, 'corpus'),
+    manifestBytes: readFileSync(join(result.run_dir, 'corpus_manifest.json')),
+    priorBytes: readFileSync(join(result.run_dir, 'PRIOR_KNOWLEDGE.json')),
     artifactBytes,
     findingId: 'F-001',
   });
   assert.equal(recomputed.status, 'RECOMPUTED');
-  assert.equal(recomputed.observed_line, 2);
+  assert.equal(recomputed.observed_line, 3);
+  const projectRoot = dirname(dirname(new URL(import.meta.url).pathname));
+  const cli = spawnSync(process.execPath, [
+    join(projectRoot, 'scripts/judgment/recompute.mjs'),
+    '--run', relative(repoRoot, result.run_dir),
+    '--finding', 'F-001',
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.equal(JSON.parse(cli.stdout).status, 'RECOMPUTED');
 });
 
 test('J11 controlling contract, proposal schema, and capability manifest hashes are exact', () => {

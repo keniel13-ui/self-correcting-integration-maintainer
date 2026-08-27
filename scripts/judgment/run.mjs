@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonicalJsonBytes } from '../pr2/canonical.mjs';
-import { sha256 } from '../pr2/inputs.mjs';
+import { assertSafePath, sha256 } from '../pr2/inputs.mjs';
 import {
   AGENT_CAPABILITIES,
   AGENT_CAPABILITY_MANIFEST_SHA256,
@@ -45,12 +45,20 @@ export async function executeJudgmentLoop({
   corpusRoot,
   manifestBytes,
   priorBytes,
-  runsRoot,
+  repoRoot,
+  runsRoot = join(repoRoot, 'docs/demo/runs'),
   runModel = runJudgmentModel,
   verifyCandidate = runCandidateVerification,
   now = () => new Date().toISOString(),
   runId = newRunId(),
 }) {
+  if (typeof repoRoot !== 'string' || repoRoot.length === 0) throw new TypeError('repoRoot is required');
+  if (!/^judgment-[0-9a-f]{32}$/.test(runId)) throw new TypeError('runId invalid');
+  const runDir = join(runsRoot, runId);
+  const recomputeRunPath = assertSafePath(relative(repoRoot, runDir), 'recompute run path');
+  if (!/^[A-Za-z0-9._/-]+$/.test(recomputeRunPath)) {
+    throw new TypeError('recompute run path is not shell-safe');
+  }
   const corpus = loadCorpus({ corpusRoot, manifestBytes });
   const expectedHashes = {
     instructions_sha256: instructionSha256(),
@@ -64,6 +72,7 @@ export async function executeJudgmentLoop({
     corpus,
     priorSha256: priorState.priorSha256,
     knownIds: priorState.knownIds,
+    recomputeRunPath,
   });
   const coverage = coverageFromCorpus(corpus);
   if (findings.length === 0) {
@@ -121,9 +130,16 @@ export async function executeJudgmentLoop({
       'the candidate has been applied to the target repository',
     ],
   };
-  const runDir = join(runsRoot, runId);
   mkdirSync(runsRoot, { recursive: true });
   mkdirSync(runDir, { recursive: false });
+  mkdirSync(join(runDir, 'corpus'), { recursive: false });
+  for (const file of corpus.files) {
+    const target = join(runDir, 'corpus', file.path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, file.bytes, { flag: 'wx' });
+  }
+  writeFileSync(join(runDir, 'corpus_manifest.json'), manifestBytes, { flag: 'wx' });
+  writeFileSync(join(runDir, 'PRIOR_KNOWLEDGE.json'), priorBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'raw_model_response.json'), rawModelBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'candidate_verification_evidence.json'), verificationBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'change_proposal.json'), proposalBytes, { flag: 'wx' });
@@ -140,7 +156,8 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === pathToFileURL(thi
       corpusRoot: options.corpus,
       manifestBytes: readFileSync(options.manifest),
       priorBytes: readFileSync(options.prior),
-      runsRoot: options.runs ?? join(repoRoot, '.judgment-runs'),
+      repoRoot,
+      runsRoot: options.runs ?? join(repoRoot, 'docs/demo/runs'),
     });
     process.stdout.write(canonicalJsonBytes(outcome));
     process.exitCode = outcome.status === 'BREAKER_PENDING' || outcome.status === 'NO_FINDINGS' ? 0 : 1;
