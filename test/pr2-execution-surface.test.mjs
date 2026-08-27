@@ -282,13 +282,18 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
   for (const status of ['error', 'cancelled', 'timeout']) {
     const p = prepared(`turn-${status}`);
     let deleted = 0;
+    let cancelled = 0;
+    let turnBudget = 0;
     const client = {
       providersConfigured: async () => true,
       createSession: async () => 'session',
-      createTurn: async () => 'turn',
+      createTurn: async (_session, _request, _arguments, timeoutMs) => {
+        turnBudget = timeoutMs;
+        return 'turn';
+      },
       getTurn: async () => ({ state: { status: status === 'timeout' ? 'running' : status } }),
       listEvents: async () => successEvents(p),
-      cancelSession: async () => {},
+      cancelSession: async () => { cancelled += 1; },
     };
     const evidence = await executePreparedSurface({
       repoRoot,
@@ -304,13 +309,9 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
         nodeVersion: process.version, npmVersion: '11.0.0',
       },
       clock: status === 'timeout' ? (() => {
-        let first = true;
+        const values = [0, 0, 60_001];
         return () => {
-          if (first) {
-            first = false;
-            return 0;
-          }
-          return 60_001;
+          return values.shift() ?? 60_001;
         };
       })() : Date.now,
       sleep: async () => {},
@@ -318,7 +319,33 @@ test('T14 turn error, cancellation, and timeout never succeed and still invoke c
     assert.equal(evidence.status, 'NOT_ESTABLISHED');
     assert.ok(evidence.failure_reasons.includes('TURN_NOT_DONE'));
     assert.equal(deleted, 1);
+    assert.ok(turnBudget > 0 && turnBudget <= 60_000);
+    if (status === 'timeout') assert.ok(cancelled >= 1);
   }
+
+  const outage = prepared('event-outage');
+  let outageCancellations = 0;
+  const outageEvidence = await executePreparedSurface({
+    repoRoot,
+    prepared: outage,
+    client: {
+      providersConfigured: async () => true,
+      createSession: async () => 'session',
+      createTurn: async () => 'turn',
+      getTurn: async () => ({ state: { status: 'done' } }),
+      listEvents: async () => { throw new BoundedHttpError('UNAVAILABLE'); },
+      cancelSession: async () => { outageCancellations += 1; },
+    },
+    cleanupProvider: { deleteSandbox: async () => {}, observeAbsent: async () => false },
+    observations: {
+      baseCommit: BASE_COMMIT, packageSha256: PACKAGE_SHA256, lockSha256: LOCK_SHA256,
+      trueforgeVersion: TRUEFORGE_VERSION, sdkVersion: SDK_VERSION,
+      nodeVersion: process.version, npmVersion: '11.0.0',
+    },
+    sleep: async () => {},
+  });
+  assert.ok(outageEvidence.failure_reasons.includes('CLEANUP_UNCONFIRMED'));
+  assert.ok(outageCancellations >= 1);
 });
 
 test('T15 cleanup dedupes exact run IDs and rejects unrelated or wildcard targets', async () => {
@@ -423,6 +450,13 @@ test('T18 stock provider rejection is preserved without session creation or dire
     assert.equal(sessions, 0);
     assert.equal(cleanupCalls, 0);
   }
+
+  const scoped404 = new TrueForgeClient({
+    fetchImpl: async url => String(url).endsWith('/model-providers')
+      ? new Response(JSON.stringify({ data: [{}] }), { status: 200 })
+      : new Response(null, { status: 404 }),
+  });
+  assert.equal(await scoped404.providersConfigured(), false);
 });
 
 test('T20 reducer emits exhaustive failures in frozen order and no authority verdict words', () => {

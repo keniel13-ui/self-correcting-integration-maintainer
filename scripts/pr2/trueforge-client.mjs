@@ -36,9 +36,17 @@ export class TrueForgeClient {
   }
 
   async providersConfigured() {
+    const observeProvider = async path => {
+      try {
+        return await this.request('GET', path);
+      } catch (error) {
+        if (error instanceof BoundedHttpError && error.status === 404) return null;
+        throw error;
+      }
+    };
     const [model, sandbox] = await Promise.all([
-      this.request('GET', '/api/v1/settings/model-providers'),
-      this.request('GET', '/api/v1/settings/sandbox-providers'),
+      observeProvider('/api/v1/settings/model-providers'),
+      observeProvider('/api/v1/settings/sandbox-providers'),
     ]);
     const modelData = model?.data;
     const sandboxData = sandbox?.data;
@@ -73,7 +81,7 @@ export class TrueForgeClient {
     return id;
   }
 
-  async createTurn(sessionId, executionRequest, expectedExecArguments) {
+  async createTurn(sessionId, executionRequest, expectedExecArguments, timeoutMs) {
     const body = await this.request('POST', `/api/v1/sessions/${encodeURIComponent(sessionId)}/turns`, {
       input: [{
         type: 'user.message',
@@ -82,23 +90,27 @@ export class TrueForgeClient {
           `Call exec exactly once with ${JSON.stringify(expectedExecArguments)}.`,
       }],
       stream: false,
-    }, 60_000);
+    }, timeoutMs);
     const id = body?.data?.id;
     if (typeof id !== 'string' || id.length === 0) throw new BoundedHttpError('TURN_ID_ABSENT');
     return id;
   }
 
-  async getTurn(sessionId, turnId) {
+  async getTurn(sessionId, turnId, timeoutMs) {
     return (await this.request(
       'GET',
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}`,
+      undefined,
+      timeoutMs,
     ))?.data;
   }
 
-  async listEvents(sessionId, turnId) {
+  async listEvents(sessionId, turnId, timeoutMs = 5_000) {
     return (await this.request(
       'GET',
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/events`,
+      undefined,
+      timeoutMs,
     ))?.data ?? [];
   }
 

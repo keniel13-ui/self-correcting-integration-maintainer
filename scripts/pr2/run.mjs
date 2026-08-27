@@ -14,6 +14,17 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function observeEvents(client, sessionId, turnId, sleep, attempts) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return { observed: true, events: await client.listEvents(sessionId, turnId, 5_000) };
+    } catch {
+      if (attempt + 1 < attempts) await sleep(100);
+    }
+  }
+  return { observed: false, events: [] };
+}
+
 export function daytonaCleanupProvider({
   apiKey = process.env.DAYTONA_API_KEY,
   baseUrl = 'https://app.daytona.io',
@@ -78,44 +89,69 @@ export async function executePreparedSurface({
   let turnStatus = 'error';
   let events = [];
   let eventsObserved = false;
+  let turnMayExistWithoutId = false;
+  let turnRequestStarted = false;
+  let phase = 'provider';
   let cleanup = { attempted_ids: [], confirmed_absent_ids: [], unconfirmed_ids: [], checked_at_utc: now() };
 
   if (preflight.length === 0) {
     try {
       if (!await client.providersConfigured()) throw new BoundedHttpError('PROVIDER_NOT_CONFIGURED', 422);
+      phase = 'session';
       sessionId = await client.createSession(prepared.expectedExecArguments);
-      turnId = await client.createTurn(sessionId, prepared.executionRequest, prepared.expectedExecArguments);
       const deadline = clock() + prepared.manifest.maximum_turn_ms;
+      const remaining = () => Math.max(0, deadline - clock());
+      phase = 'turn';
+      const createTurnBudget = remaining();
+      if (createTurnBudget === 0) throw new BoundedHttpError('TIMEOUT');
+      turnRequestStarted = true;
+      turnId = await client.createTurn(
+        sessionId,
+        prepared.executionRequest,
+        prepared.expectedExecArguments,
+        createTurnBudget,
+      );
+      turnStatus = 'running';
+      phase = 'poll';
       while (clock() < deadline) {
-        const turn = await client.getTurn(sessionId, turnId);
+        const pollBudget = remaining();
+        if (pollBudget === 0) break;
+        const turn = await client.getTurn(sessionId, turnId, Math.min(10_000, pollBudget));
         const status = turn?.state?.status;
         if (TERMINAL.has(status)) {
           turnStatus = status;
           break;
         }
-        await sleep(250);
+        await sleep(Math.min(250, remaining()));
       }
       if (!TERMINAL.has(turnStatus)) {
         turnStatus = 'timeout';
         await client.cancelSession(sessionId);
       }
-      events = await client.listEvents(sessionId, turnId);
-      eventsObserved = true;
     } catch (error) {
+      turnMayExistWithoutId = turnRequestStarted && turnId === '';
+      if (error instanceof BoundedHttpError && error.code === 'TIMEOUT' && ['turn', 'poll'].includes(phase)) {
+        turnStatus = 'timeout';
+      } else if (turnRequestStarted) {
+        turnStatus = 'error';
+      }
       if (error instanceof BoundedHttpError &&
-          ([0, 401, 403, 422].includes(error.status) ||
-           ['TIMEOUT', 'UNAVAILABLE', 'PROVIDER_NOT_CONFIGURED'].includes(error.code))) {
+          ([401, 403, 422].includes(error.status) ||
+           (['provider', 'session'].includes(phase) &&
+            ([0].includes(error.status) || ['TIMEOUT', 'UNAVAILABLE', 'PROVIDER_NOT_CONFIGURED'].includes(error.code))))) {
         providerRejected = true;
       }
-      if (sessionId && turnId) {
-        try {
-          events = await client.listEvents(sessionId, turnId);
-          eventsObserved = true;
-        } catch {
-          events = [];
-        }
-      }
+      if (sessionId && turnStatus !== 'done') await client.cancelSession(sessionId);
     } finally {
+      if (sessionId && turnId) {
+        let observation = await observeEvents(client, sessionId, turnId, sleep, 3);
+        if (!observation.observed) {
+          await client.cancelSession(sessionId);
+          observation = await observeEvents(client, sessionId, turnId, sleep, 2);
+        }
+        events = observation.events;
+        eventsObserved = observation.observed;
+      }
       const ownedIds = createdSandboxIds(events);
       cleanup = await cleanupSandboxes({
         createdIds: ownedIds,
@@ -126,7 +162,9 @@ export async function executePreparedSurface({
     }
   }
 
-  if (sessionId && turnId && !eventsObserved) preflight.push('CLEANUP_UNCONFIRMED');
+  if ((sessionId && turnId && !eventsObserved) || turnMayExistWithoutId) {
+    preflight.push('CLEANUP_UNCONFIRMED');
+  }
 
   const evidence = reduceExecution({
     manifest: prepared.manifest,
