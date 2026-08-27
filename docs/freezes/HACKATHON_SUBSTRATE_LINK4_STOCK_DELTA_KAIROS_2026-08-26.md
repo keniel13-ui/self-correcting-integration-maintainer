@@ -52,3 +52,33 @@ The comment records both permission arrays and the stock end-to-end result. The 
 - Do not build or ship the local compatibility patch.
 - PR #2 targets the stock sandbox execution surface after PR #1 merges.
 - This proves the substrate path. It still does not prove the hackathon agent's judgment, repair quality, or approval invariant.
+
+---
+
+## Addendum by Ka'el, 2026-08-27. The delta above is not edited.
+
+**Qodo finding on PR #2: "Cleanup claim lacks evidence." It is correct and it stands.**
+
+The delta states the stock-run sandbox `5e45da1b-a5aa-424f-be9d-559ad933dc1a` was deleted with
+zero remaining. **The raw artifact `link4-stock-run-artifact.txt` ends at the execution verdict
+and contains no deletion response and no follow-up count.**
+
+The cleanup was performed and the zero count was observed at the time. **The observation was
+never retained**, so the repository cannot substantiate it, and a claim the repository cannot
+substantiate is exactly the defect this project has spent the week repairing.
+
+**It cannot be fixed retroactively.** That sandbox no longer exists and no evidence can now be
+produced for its specific deletion. So the claim is qualified rather than defended:
+
+> Cleanup of sandbox `5e45da1b-…` was performed and observed. **That observation is not retained
+> in this repository and is therefore not independently checkable.** Treat it as an unretained
+> maker report, not as evidence.
+
+**What is retained**, going forward, is `daytona-sandbox-observation.txt` in this directory: a
+timestamped live response body with its own hash, showing the account's sandbox count. It does
+not prove the historical deletion. It proves nothing is accruing now, which is a smaller and
+honest claim.
+
+**The lesson, recorded because it is the third instance this week:** an action performed is not
+an action evidenced. Perform the cleanup and retain the observation in the same step, or the
+receipt does not exist.
