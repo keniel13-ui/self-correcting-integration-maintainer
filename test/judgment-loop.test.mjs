@@ -236,6 +236,15 @@ test('J06 exact repair changes only the named file and binds the complete result
   assert.match(target.bytes.toString('utf8'), /&& report\.credentials/);
   assert.equal(sha256(target.bytes), s.prepared.target.resulting_file_sha256);
   assert.equal(s.prepared.commandManifest.irreversible_actions_allowed, false);
+  assert.equal(s.prepared.expectedExecArguments.command, 'node /opt/tf/uploads/candidate-verifier.cjs');
+  assert.ok(Buffer.byteLength(JSON.stringify(s.prepared.expectedExecArguments), 'utf8') < 128);
+  assert.equal(s.prepared.relayFile.size_bytes > 512, true);
+  const encoded = s.prepared.relayFile.data_uri.split(',', 2)[1];
+  assert.equal(sha256(Buffer.from(encoded, 'base64')), s.prepared.relayFile.sha256);
+  assert.equal(
+    s.prepared.commandManifest.relay_transport.exec_arguments_sha256,
+    sha256(canonicalJsonBytes(s.prepared.expectedExecArguments)),
+  );
 });
 
 test('J07 candidate verification requires persisted call, nested response, exit zero, and exact cleanup', () => {
@@ -395,4 +404,43 @@ test('J12 judgment session requests no tools and disables its sandbox', async ()
   assert.equal(observed.path, '/api/v1/sessions');
   assert.equal(observed.body.agent.spec.config.sandbox.enabled, false);
   assert.equal(Object.hasOwn(observed.body.agent.spec, 'tools'), false);
+});
+
+test('J13 relay transports candidate bytes as a TrueForge upload and emits only a short command', async () => {
+  const s = findingState();
+  const requests = [];
+  const client = new JudgmentTrueForgeClient();
+  client.request = async (method, path, body) => {
+    requests.push({ method, path, body });
+    return { data: { id: requests.length === 1 ? 'session-1' : 'turn-1' } };
+  };
+  assert.equal(await client.createRelaySession(s.prepared.expectedExecArguments), 'session-1');
+  assert.equal(
+    await client.createRelayTurn(
+      'session-1',
+      s.prepared.expectedExecArguments,
+      s.prepared.relayFile,
+      60_000,
+    ),
+    'turn-1',
+  );
+
+  const sessionSpec = requests[0].body.agent.spec;
+  assert.equal(sessionSpec.model.params.max_tokens, 512);
+  assert.equal(sessionSpec.config.sandbox.enabled, true);
+  assert.match(sessionSpec.instructions, /candidate-verifier\.cjs/);
+  assert.equal(sessionSpec.instructions.includes(s.prepared.relayFile.data_uri), false);
+
+  const content = requests[1].body.input[0].content;
+  assert.deepEqual(content.map(part => part.type), ['file', 'text']);
+  assert.equal(content[0].name, 'candidate-verifier.cjs');
+  assert.equal(content[0].data, s.prepared.relayFile.data_uri);
+  assert.equal(content[1].text.includes(s.prepared.relayFile.data_uri), false);
+  assert.ok(Buffer.byteLength(content[1].text, 'utf8') < 160);
+
+  const changed = { ...s.prepared.relayFile, sha256: '0'.repeat(64) };
+  await assert.rejects(
+    client.createRelayTurn('session-1', s.prepared.expectedExecArguments, changed, 60_000),
+    /relay file bytes invalid/,
+  );
 });

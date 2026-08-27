@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { canonicalJsonBytes, parseStrictJson, assertClosedObject } from '../pr2/canonical.mjs';
 import { cleanupSandboxes, createdSandboxIds } from '../pr2/cleanup.mjs';
 import { sha256 } from '../pr2/inputs.mjs';
@@ -55,6 +56,48 @@ export class JudgmentTrueForgeClient extends TrueForgeClient {
       },
     });
     return requireId(body, 'SESSION_ID_ABSENT');
+  }
+
+  async createRelayTurn(sessionId, expectedArguments, relayFile, timeoutMs) {
+    assertClosedObject(
+      relayFile,
+      ['name', 'mime', 'sandbox_path', 'sha256', 'size_bytes', 'data_uri'],
+      'relay file',
+    );
+    const expectedCommand = `node ${relayFile.sandbox_path}`;
+    const prefix = `data:${relayFile.mime};base64,`;
+    if (relayFile.name !== 'candidate-verifier.cjs' ||
+        relayFile.mime !== 'application/octet-stream' ||
+        relayFile.sandbox_path !== `/opt/tf/uploads/${relayFile.name}` ||
+        expectedArguments?.command !== expectedCommand ||
+        typeof relayFile.data_uri !== 'string' || !relayFile.data_uri.startsWith(prefix)) {
+      throw new TypeError('relay file transport invalid');
+    }
+    const encoded = relayFile.data_uri.slice(prefix.length);
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.length === 0 || bytes.toString('base64') !== encoded ||
+        bytes.length !== relayFile.size_bytes || sha256(bytes) !== relayFile.sha256) {
+      throw new TypeError('relay file bytes invalid');
+    }
+    const body = await this.request(
+      'POST',
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/turns`,
+      {
+        input: [{
+          type: 'user.message',
+          content: [
+            { type: 'file', name: relayFile.name, data: relayFile.data_uri },
+            {
+              type: 'text',
+              text: `Call exec exactly once with ${JSON.stringify(expectedArguments)}.`,
+            },
+          ],
+        }],
+        stream: false,
+      },
+      timeoutMs,
+    );
+    return requireId(body, 'TURN_ID_ABSENT');
   }
 
   async createMessageTurn(sessionId, content, timeoutMs) {
@@ -210,9 +253,10 @@ export async function runCandidateVerification({
   try {
     sessionId = await client.createRelaySession(prepared.expectedExecArguments);
     const deadline = Date.now() + MAX_SANDBOX_TURN_MS;
-    turnId = await client.createMessageTurn(
+    turnId = await client.createRelayTurn(
       sessionId,
-      `Call exec exactly once with ${JSON.stringify(prepared.expectedExecArguments)}.`,
+      prepared.expectedExecArguments,
+      prepared.relayFile,
       Math.max(1, deadline - Date.now()),
     );
     const turn = await pollTurn(client, sessionId, turnId, deadline);

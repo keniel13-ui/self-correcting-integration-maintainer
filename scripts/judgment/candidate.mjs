@@ -8,6 +8,10 @@ const RESULT_KEYS = [
   'stdout_sha256', 'stdout_length', 'stderr_sha256', 'stderr_length',
 ];
 
+const RELAY_FILE_NAME = 'candidate-verifier.cjs';
+const RELAY_FILE_MIME = 'application/octet-stream';
+const RELAY_SANDBOX_PATH = `/opt/tf/uploads/${RELAY_FILE_NAME}`;
+
 export function applyExactRepair(corpus, finding) {
   if (!finding.repair) throw new TypeError('finding has no repair');
   const target = corpus.files.find(file => file.path === finding.observed.file);
@@ -62,12 +66,22 @@ export function prepareCandidateVerification({ corpus, finding }) {
   const repaired = applyExactRepair(corpus, finding);
   const files = repaired.files.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
   const candidateBundleSha256 = deriveBundle(files);
+  const expectedExecArguments = validateExecArguments({
+    command: `node ${RELAY_SANDBOX_PATH}`,
+  });
   const commandManifest = {
     schema: 'candidate_verification_command/v1',
     change_proposal_schema_sha256: CHANGE_PROPOSAL_SCHEMA_SHA256,
     corpus_manifest_sha256: corpus.manifestSha256,
     candidate_bundle_sha256: candidateBundleSha256,
     verification: corpus.manifest.verification,
+    relay_transport: {
+      type: 'trueforge_user_file/v1',
+      file_name: RELAY_FILE_NAME,
+      mime: RELAY_FILE_MIME,
+      sandbox_path: RELAY_SANDBOX_PATH,
+      exec_arguments_sha256: sha256(canonicalJsonBytes(expectedExecArguments)),
+    },
     irreversible_actions_allowed: false,
   };
   const commandManifestSha256 = sha256(canonicalJsonBytes(commandManifest));
@@ -77,16 +91,22 @@ export function prepareCandidateVerification({ corpus, finding }) {
     candidateBundleSha256,
     commandManifestSha256,
   });
-  const encoded = Buffer.from(program, 'utf8').toString('base64');
-  const expectedExecArguments = validateExecArguments({
-    command: `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`,
-  });
+  const programBytes = Buffer.from(program, 'utf8');
+  const relayFile = {
+    name: RELAY_FILE_NAME,
+    mime: RELAY_FILE_MIME,
+    sandbox_path: RELAY_SANDBOX_PATH,
+    sha256: sha256(programBytes),
+    size_bytes: programBytes.length,
+    data_uri: `data:${RELAY_FILE_MIME};base64,${programBytes.toString('base64')}`,
+  };
   return {
     ...repaired,
     candidateBundleSha256,
     commandManifest,
     commandManifestSha256,
     expectedExecArguments,
+    relayFile,
   };
 }
 
