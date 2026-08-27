@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonicalJsonBytes } from '../pr2/canonical.mjs';
 import { sha256 } from '../pr2/inputs.mjs';
@@ -22,6 +22,17 @@ import {
 import { prepareCandidateVerification } from './candidate.mjs';
 import { runCandidateVerification, runJudgmentModel } from './live.mjs';
 import { createChangeProposal } from './proposal.mjs';
+
+const thisFile = fileURLToPath(import.meta.url);
+const projectRoot = dirname(dirname(dirname(thisFile)));
+const RECOMPUTE_SOURCE_PATHS = Object.freeze([
+  'scripts/judgment/recompute.mjs',
+  'scripts/judgment/core.mjs',
+  'scripts/judgment/constants.mjs',
+  'scripts/pr2/canonical.mjs',
+  'scripts/pr2/inputs.mjs',
+  'scripts/pr2/constants.mjs',
+]);
 
 function parseArgs(argv) {
   const options = {};
@@ -45,19 +56,14 @@ export async function executeJudgmentLoop({
   corpusRoot,
   manifestBytes,
   priorBytes,
-  repoRoot,
-  runsRoot = join(repoRoot, 'docs/demo/runs'),
+  runsRoot = join(projectRoot, 'docs/demo/runs'),
   runModel = runJudgmentModel,
   verifyCandidate = runCandidateVerification,
   now = () => new Date().toISOString(),
   runId = newRunId(),
 }) {
-  if (typeof repoRoot !== 'string' || repoRoot.length === 0) throw new TypeError('repoRoot is required');
   if (!/^judgment-[0-9a-f]{32}$/.test(runId)) throw new TypeError('runId invalid');
-  const absoluteRepoRoot = resolve(repoRoot);
   const runDir = resolve(runsRoot, runId);
-  const insideRepo = runDir.startsWith(`${absoluteRepoRoot}${sep}`);
-  const recomputeRunPath = insideRepo ? relative(absoluteRepoRoot, runDir) : runDir;
   const corpus = loadCorpus({ corpusRoot, manifestBytes });
   const expectedHashes = {
     instructions_sha256: instructionSha256(),
@@ -71,7 +77,6 @@ export async function executeJudgmentLoop({
     corpus,
     priorSha256: priorState.priorSha256,
     knownIds: priorState.knownIds,
-    recomputeRunPath,
   });
   const coverage = coverageFromCorpus(corpus);
   if (findings.length === 0) {
@@ -131,6 +136,11 @@ export async function executeJudgmentLoop({
   };
   mkdirSync(runsRoot, { recursive: true });
   mkdirSync(runDir, { recursive: false });
+  for (const sourcePath of RECOMPUTE_SOURCE_PATHS) {
+    const target = join(runDir, 'recompute', sourcePath);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, readFileSync(join(projectRoot, sourcePath)), { flag: 'wx' });
+  }
   mkdirSync(join(runDir, 'corpus'), { recursive: false });
   for (const file of corpus.files) {
     const target = join(runDir, 'corpus', file.path);
@@ -146,17 +156,14 @@ export async function executeJudgmentLoop({
   return { ...artifact, run_dir: runDir };
 }
 
-const thisFile = fileURLToPath(import.meta.url);
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === pathToFileURL(thisFile).href) {
   try {
     const options = parseArgs(process.argv.slice(2));
-    const repoRoot = dirname(dirname(dirname(thisFile)));
     const outcome = await executeJudgmentLoop({
       corpusRoot: options.corpus,
       manifestBytes: readFileSync(options.manifest),
       priorBytes: readFileSync(options.prior),
-      repoRoot,
-      runsRoot: options.runs ?? join(repoRoot, 'docs/demo/runs'),
+      runsRoot: options.runs ?? join(projectRoot, 'docs/demo/runs'),
     });
     process.stdout.write(canonicalJsonBytes(outcome));
     process.exitCode = outcome.status === 'BREAKER_PENDING' || outcome.status === 'NO_FINDINGS' ? 0 : 1;

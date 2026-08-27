@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonicalJsonBytes, parseStrictJson } from '../pr2/canonical.mjs';
 import { sha256 } from '../pr2/inputs.mjs';
 import { loadCorpus } from './core.mjs';
@@ -12,6 +13,7 @@ function value(argv, name, fallback) {
 export function recomputeFinding({ corpusRoot, manifestBytes, priorBytes, artifactBytes, findingId }) {
   const corpus = loadCorpus({ corpusRoot, manifestBytes });
   const artifact = parseStrictJson(artifactBytes.toString('utf8'));
+  if (!/^judgment-[0-9a-f]{32}$/.test(artifact?.run_id ?? '')) throw new TypeError('artifact run id invalid');
   const finding = artifact?.findings?.find(item => item.finding_id === findingId);
   if (!finding) throw new TypeError('finding absent');
   const file = corpus.files.find(item => item.path === finding.observed.file);
@@ -46,14 +48,14 @@ export function recomputeFinding({ corpusRoot, manifestBytes, priorBytes, artifa
   };
 }
 
-if (process.argv[1]?.endsWith('/recompute.mjs')) {
+const thisFile = fileURLToPath(import.meta.url);
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === pathToFileURL(thisFile).href) {
   const argv = process.argv.slice(2);
   const run = value(argv, 'run');
   if (typeof run !== 'string' || run.length === 0 || run.normalize('NFC') !== run || run.includes('\0')) {
     throw new TypeError('--run is required and must be an NFC path');
   }
   const runRoot = resolve(run);
-  if (!/^judgment-[0-9a-f]{32}$/.test(basename(runRoot))) throw new TypeError('--run id invalid');
   const result = recomputeFinding({
     corpusRoot: join(runRoot, 'corpus'),
     manifestBytes: readFileSync(join(runRoot, 'corpus_manifest.json')),

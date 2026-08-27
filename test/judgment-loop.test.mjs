@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { canonicalJson, canonicalJsonBytes } from '../scripts/pr2/canonical.mjs';
@@ -320,7 +320,7 @@ test('J10 recomputation rejects model assertion and re-derives bytes, count, lin
   const artifactBytes = readFileSync(join(result.run_dir, 'judgment_run_artifact.json'));
   assert.equal(
     JSON.parse(artifactBytes).findings[0].recompute_command,
-    "node scripts/judgment/recompute.mjs --run 'docs/demo/runs/judgment-11111111111111111111111111111111' --finding F-001",
+    'node recompute/scripts/judgment/recompute.mjs --run . --finding F-001',
   );
   const recomputed = recomputeFinding({
     corpusRoot: join(result.run_dir, 'corpus'),
@@ -341,24 +341,30 @@ test('J10 recomputation rejects model assertion and re-derives bytes, count, lin
   assert.equal(JSON.parse(cli.stdout).status, 'RECOMPUTED');
 });
 
-test('J10b external run roots produce an executable, safely quoted recompute command', async () => {
+test('J10b external run roots remain recomputable after relocation without shell-specific quoting', async () => {
   const s = findingState();
-  const repoRoot = mkdtempSync(join(tmpdir(), 'judgment-repo-'));
   const runs = mkdtempSync(join(tmpdir(), "judgment external root's "));
   const result = await executeJudgmentLoop({
     corpusRoot: s.f.root,
     manifestBytes: s.f.manifestBytes,
     priorBytes: s.f.priorBytes,
-    repoRoot,
     runsRoot: runs,
     runId: 'judgment-22222222222222222222222222222222',
     runModel: async () => ({ content: response(), usage: null }),
     verifyCandidate: async ({ prepared }) => successVerification(prepared),
   });
-  const artifact = JSON.parse(readFileSync(join(result.run_dir, 'judgment_run_artifact.json')));
-  const projectRoot = dirname(dirname(new URL(import.meta.url).pathname));
-  const cli = spawnSync('/bin/sh', ['-c', artifact.findings[0].recompute_command], {
-    cwd: projectRoot,
+  const publishedRoot = mkdtempSync(join(tmpdir(), 'judgment published '));
+  const movedRun = join(publishedRoot, 'copied-run');
+  renameSync(result.run_dir, movedRun);
+  const artifact = JSON.parse(readFileSync(join(movedRun, 'judgment_run_artifact.json')));
+  assert.equal(
+    artifact.findings[0].recompute_command,
+    'node recompute/scripts/judgment/recompute.mjs --run . --finding F-001',
+  );
+  const cli = spawnSync(process.execPath, [
+    'recompute/scripts/judgment/recompute.mjs', '--run', '.', '--finding', 'F-001',
+  ], {
+    cwd: movedRun,
     encoding: 'utf8',
   });
   assert.equal(cli.status, 0, cli.stderr);
