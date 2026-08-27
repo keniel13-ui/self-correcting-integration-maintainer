@@ -11,4 +11,5 @@ dist/
 .DS_Store
 
 local-prereqs.json
+.judgment-runs/
 .pr2-runs/

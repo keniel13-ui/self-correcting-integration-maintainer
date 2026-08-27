@@ -1,0 +1,35 @@
+{
+  "schema": "agent_capability_manifest/v1",
+  "governing_contract_sha256": "2de5a4b05c776803d09f1bea9500bd0c84de75be57fc1d24414cf5966e98afe3",
+  "agent_surface": {
+    "sandbox_enabled": false,
+    "tool_descriptions": [],
+    "target_repository_mounted": false,
+    "approval_token_available": false
+  },
+  "allowed": [
+    "receive_corpus_bytes",
+    "return_json"
+  ],
+  "denied": [
+    "apply_change",
+    "commit",
+    "filesystem_write",
+    "git_push",
+    "mint_approval",
+    "network",
+    "read_approval_token",
+    "spawn_subagent"
+  ],
+  "separation": {
+    "judgment_model": "Receives corpus bytes in one prompt and has zero tools.",
+    "verification_relay": "Runs only the harness-generated candidate command in an ephemeral Daytona sandbox.",
+    "target_repository": "Is never mounted in either model surface.",
+    "promotion": "No promotion or apply implementation exists in this agent surface."
+  },
+  "not_established": [
+    "that the model will return an admissible finding",
+    "that a proposed repair is correct before independent review",
+    "that human approval has been granted"
+  ]
+}
