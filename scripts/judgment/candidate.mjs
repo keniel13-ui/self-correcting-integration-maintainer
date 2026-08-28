@@ -88,7 +88,7 @@ function outboundArtifact(role, bytes) {
     role,
     name,
     mime: ARTIFACT_MIME,
-    sandbox_path: artifactPath(role),
+    intended_sandbox_path: artifactPath(role),
     sha256: sha256(bytes),
     size_bytes: bytes.length,
     data_uri: `data:${ARTIFACT_MIME};base64,${bytes.toString('base64')}`,

@@ -320,6 +320,7 @@ test('J06 exact repair changes only the named file and binds the complete result
   );
   assert.equal(Buffer.byteLength(s.prepared.expectedExecArguments.command, 'utf8'), 130);
   assert.equal(Buffer.byteLength(JSON.stringify(s.prepared.expectedExecArguments), 'utf8'), 144);
+  assert.equal(canonicalJsonBytes(s.prepared.expectedExecArguments).length, 145);
   assert.deepEqual(s.prepared.outboundArtifacts.map(artifact => artifact.role), ['verifier', 'payload', 'manifest']);
   for (const artifact of s.prepared.outboundArtifacts) {
     const encoded = artifact.data_uri.split(',', 2)[1];
@@ -642,7 +643,7 @@ test('T25 verifier and manifest reports are compared by the harness with distinc
   assert.notEqual(manifestMismatch.result, null);
 });
 
-test('T26 pre-submit assertion and evidence preserve the outbound-byte claim limit', () => {
+test('T26-R pre-submit assertion, evidence, and field names preserve the outbound-byte claim limit', () => {
   const prepared = findingState().prepared;
   const inspection = inspectPreparedTransport(prepared);
   assert.deepEqual(inspection.failure_reasons, []);
@@ -650,8 +651,12 @@ test('T26 pre-submit assertion and evidence preserve the outbound-byte claim lim
     inspection.outbound_artifacts.map(artifact => artifact.role),
     ['manifest', 'payload', 'verifier'],
   );
-  const forbidden = /\bpersisted\b|\bserver\b|upload identity/i;
+  const forbidden = /\bpersisted\b|\bserver\b|upload identity|\bsandbox_path\b|end-to-end|both ends/i;
   assert.doesNotMatch(JSON.stringify({ outbound_artifacts: inspection.outbound_artifacts }), forbidden);
+  for (const artifact of inspection.outbound_artifacts) {
+    assert.equal(Object.hasOwn(artifact, 'intended_sandbox_path'), true);
+    assert.equal(Object.hasOwn(artifact, 'sandbox_path'), false);
+  }
 
   const tampered = tamperArtifactData(prepared, 'manifest');
   let message = '';

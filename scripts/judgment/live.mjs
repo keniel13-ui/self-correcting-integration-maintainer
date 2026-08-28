@@ -36,7 +36,7 @@ const FAILURE_ORDER = [
 
 const OUTBOUND_ROLES = ['verifier', 'payload', 'manifest'];
 const OUTBOUND_ARTIFACT_KEYS = [
-  'role', 'name', 'mime', 'sandbox_path', 'sha256', 'size_bytes', 'data_uri',
+  'role', 'name', 'mime', 'intended_sandbox_path', 'sha256', 'size_bytes', 'data_uri',
 ];
 const EMPTY_SHA256 = sha256(Buffer.alloc(0));
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
@@ -48,17 +48,17 @@ function artifactExpectations(prepared) {
   return {
     verifier: {
       name: transport?.verifier_file_name,
-      sandbox_path: transport?.verifier_path,
+      intended_sandbox_path: transport?.verifier_path,
       sha256: prepared?.verifierSha256,
     },
     payload: {
       name: transport?.payload_file_name,
-      sandbox_path: transport?.payload_path,
+      intended_sandbox_path: transport?.payload_path,
       sha256: transport?.payload_artifact_sha256,
     },
     manifest: {
       name: transport?.manifest_file_name,
-      sandbox_path: transport?.manifest_path,
+      intended_sandbox_path: transport?.manifest_path,
       sha256: prepared?.commandManifestSha256,
     },
   };
@@ -101,7 +101,7 @@ export function inspectPreparedTransport(prepared) {
         const bytes = decodeOutboundArtifact(artifact);
         const wanted = expected[role];
         if (artifact.role !== role || artifact.name !== wanted.name ||
-            artifact.sandbox_path !== wanted.sandbox_path ||
+            artifact.intended_sandbox_path !== wanted.intended_sandbox_path ||
             !HEX_SHA256.test(artifact.sha256) || artifact.sha256 !== wanted.sha256 ||
             !Number.isSafeInteger(artifact.size_bytes) || artifact.size_bytes < 0 ||
             artifact.size_bytes !== bytes.length || sha256(bytes) !== wanted.sha256) {
@@ -109,7 +109,7 @@ export function inspectPreparedTransport(prepared) {
         }
         evidence.push({
           role,
-          sandbox_path: artifact.sandbox_path,
+          intended_sandbox_path: artifact.intended_sandbox_path,
           sha256: sha256(bytes),
           size_bytes: bytes.length,
         });
