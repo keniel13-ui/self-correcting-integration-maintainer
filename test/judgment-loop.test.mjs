@@ -24,7 +24,13 @@ import {
   SYSTEM_INSTRUCTIONS,
   TOOL_DESCRIPTIONS,
 } from '../scripts/judgment/constants.mjs';
-import { JudgmentTrueForgeClient, reduceCandidateVerification } from '../scripts/judgment/live.mjs';
+import {
+  assertPreparedTransport,
+  inspectPreparedTransport,
+  JudgmentTrueForgeClient,
+  reduceCandidateVerification,
+  runCandidateVerification,
+} from '../scripts/judgment/live.mjs';
 import { validateChangeProposal } from '../scripts/judgment/proposal.mjs';
 import { recomputeFinding } from '../scripts/judgment/recompute.mjs';
 import { executeJudgmentLoop } from '../scripts/judgment/run.mjs';
@@ -112,16 +118,87 @@ function findingState() {
   return { ...s, finding, prepared };
 }
 
+function outboundArtifactBytes(prepared, role) {
+  const artifact = prepared.outboundArtifacts.find(item => item.role === role);
+  assert.ok(artifact, `missing ${role} outbound artifact`);
+  const prefix = `data:${artifact.mime};base64,`;
+  assert.equal(artifact.data_uri.startsWith(prefix), true);
+  return Buffer.from(artifact.data_uri.slice(prefix.length), 'base64');
+}
+
+function withOutboundArtifacts(prepared, outboundArtifacts) {
+  return { ...prepared, outboundArtifacts };
+}
+
+function tamperArtifactData(prepared, role) {
+  return withOutboundArtifacts(prepared, prepared.outboundArtifacts.map(artifact => {
+    if (artifact.role !== role) return artifact;
+    const comma = artifact.data_uri.indexOf(',');
+    const index = comma + 1;
+    const replacement = artifact.data_uri[index] === 'A' ? 'B' : 'A';
+    return {
+      ...artifact,
+      data_uri: `${artifact.data_uri.slice(0, index)}${replacement}${artifact.data_uri.slice(index + 1)}`,
+    };
+  }));
+}
+
+function noAuthorityClient() {
+  const calls = { provider: 0, session: 0, turn: 0 };
+  return {
+    calls,
+    client: {
+      async assertDaytonaSandboxProvider() { calls.provider += 1; },
+      async createRelaySession() { calls.session += 1; return 'session-should-not-exist'; },
+      async createRelayTurn() { calls.turn += 1; return 'turn-should-not-exist'; },
+    },
+  };
+}
+
+function variantFindingState() {
+  const f = fixture();
+  const path = f.manifest.files[0].path;
+  const text = `${f.text}// second run has different corpus bytes\n`;
+  writeFileSync(join(f.root, path), text);
+  const bytes = Buffer.from(text);
+  f.text = text;
+  f.manifest = {
+    ...f.manifest,
+    corpus_id: 'unpublished-demo-2',
+    files: [{ path, sha256: sha256(bytes), size_bytes: bytes.length }],
+    verification: { argv: ['node', '--test'], timeout_ms: 11_000 },
+  };
+  f.manifestBytes = canonicalJsonBytes(f.manifest);
+  f.prior.what_the_agent_is_given.corpus_manifest_sha256 = sha256(f.manifestBytes);
+  f.priorBytes = canonicalJsonBytes(f.prior);
+  const s = state(f);
+  const [finding] = validateAgentResponse(response({
+    condition: 'a second finding produces a different candidate payload',
+    why_it_matters: 'The second run must not change the verifier program.',
+    repair: {
+      before_exact: 'const ok = report.node && report.packages;',
+      after_exact: 'const ok = Boolean(report.node && report.packages && report.credentials);',
+    },
+  }), {
+    corpus: s.corpus,
+    priorSha256: s.priorState.priorSha256,
+    knownIds: s.priorState.knownIds,
+    recomputeRunPath: 'docs/demo/runs/judgment-22222222222222222222222222222222',
+  });
+  return { ...s, finding, prepared: prepareCandidateVerification({ corpus: s.corpus, finding }) };
+}
+
 function sandboxResult(prepared, changes = {}) {
   return {
-    candidate_bundle_sha256: prepared.candidateBundleSha256,
     command_manifest_sha256: prepared.commandManifestSha256,
     exit_code: 0,
+    payload_bundle_sha256: prepared.candidateBundleSha256,
     schema: 'candidate_verification_result/v1',
     stderr_length: 0,
     stderr_sha256: sha256(Buffer.alloc(0)),
     stdout_length: 4,
     stdout_sha256: sha256(Buffer.from('ok\n')),
+    verifier_sha256: prepared.verifierSha256,
     ...changes,
   };
 }
@@ -236,13 +313,26 @@ test('J06 exact repair changes only the named file and binds the complete result
   assert.match(target.bytes.toString('utf8'), /&& report\.credentials/);
   assert.equal(sha256(target.bytes), s.prepared.target.resulting_file_sha256);
   assert.equal(s.prepared.commandManifest.irreversible_actions_allowed, false);
-  assert.equal(s.prepared.expectedExecArguments.command, 'node /opt/tf/uploads/candidate-verifier.cjs');
-  assert.ok(Buffer.byteLength(JSON.stringify(s.prepared.expectedExecArguments), 'utf8') < 128);
-  assert.equal(s.prepared.relayFile.size_bytes > 512, true);
-  const encoded = s.prepared.relayFile.data_uri.split(',', 2)[1];
-  assert.equal(sha256(Buffer.from(encoded, 'base64')), s.prepared.relayFile.sha256);
   assert.equal(
-    s.prepared.commandManifest.relay_transport.exec_arguments_sha256,
+    s.prepared.expectedExecArguments.command,
+    'node /opt/tf/uploads/candidate-verifier.cjs /opt/tf/uploads/candidate-payload.json ' +
+      '/opt/tf/uploads/candidate-command-manifest.json',
+  );
+  assert.equal(Buffer.byteLength(s.prepared.expectedExecArguments.command, 'utf8'), 130);
+  assert.equal(Buffer.byteLength(JSON.stringify(s.prepared.expectedExecArguments), 'utf8'), 144);
+  assert.deepEqual(s.prepared.outboundArtifacts.map(artifact => artifact.role), ['verifier', 'payload', 'manifest']);
+  for (const artifact of s.prepared.outboundArtifacts) {
+    const encoded = artifact.data_uri.split(',', 2)[1];
+    assert.equal(sha256(Buffer.from(encoded, 'base64')), artifact.sha256);
+  }
+  assert.equal(s.prepared.commandManifest.verifier_sha256, s.prepared.verifierSha256);
+  assert.equal(s.prepared.commandManifest.payload_bundle_sha256, s.prepared.candidateBundleSha256);
+  assert.deepEqual(
+    Object.keys(JSON.parse(outboundArtifactBytes(s.prepared, 'payload'))).sort(),
+    ['files', 'schema'],
+  );
+  assert.equal(
+    s.prepared.commandManifest.transport.exec_arguments_sha256,
     sha256(canonicalJsonBytes(s.prepared.expectedExecArguments)),
   );
 });
@@ -406,7 +496,18 @@ test('J12 judgment session requests no tools and disables its sandbox', async ()
   assert.equal(Object.hasOwn(observed.body.agent.spec, 'tools'), false);
 });
 
-test('J13 relay transports candidate bytes as a TrueForge upload and emits only a short command', async () => {
+test('T21 fixed verifier bytes do not vary with corpus, finding, payload, or manifest', () => {
+  const first = findingState().prepared;
+  const second = variantFindingState().prepared;
+  assert.notEqual(first.candidateBundleSha256, second.candidateBundleSha256);
+  assert.notEqual(first.commandManifestSha256, second.commandManifestSha256);
+  assert.deepEqual(
+    outboundArtifactBytes(first, 'verifier'),
+    outboundArtifactBytes(second, 'verifier'),
+  );
+});
+
+test('J13 relay transports exactly three file parts and emits only the fixed short command', async () => {
   const s = findingState();
   const requests = [];
   const client = new JudgmentTrueForgeClient();
@@ -414,12 +515,11 @@ test('J13 relay transports candidate bytes as a TrueForge upload and emits only 
     requests.push({ method, path, body });
     return { data: { id: requests.length === 1 ? 'session-1' : 'turn-1' } };
   };
-  assert.equal(await client.createRelaySession(s.prepared.expectedExecArguments), 'session-1');
+  assert.equal(await client.createRelaySession(s.prepared), 'session-1');
   assert.equal(
     await client.createRelayTurn(
       'session-1',
-      s.prepared.expectedExecArguments,
-      s.prepared.relayFile,
+      s.prepared,
       60_000,
     ),
     'turn-1',
@@ -429,18 +529,198 @@ test('J13 relay transports candidate bytes as a TrueForge upload and emits only 
   assert.equal(sessionSpec.model.params.max_tokens, 512);
   assert.equal(sessionSpec.config.sandbox.enabled, true);
   assert.match(sessionSpec.instructions, /candidate-verifier\.cjs/);
-  assert.equal(sessionSpec.instructions.includes(s.prepared.relayFile.data_uri), false);
+  for (const artifact of s.prepared.outboundArtifacts) {
+    assert.equal(sessionSpec.instructions.includes(artifact.data_uri), false);
+  }
 
   const content = requests[1].body.input[0].content;
-  assert.deepEqual(content.map(part => part.type), ['file', 'text']);
-  assert.equal(content[0].name, 'candidate-verifier.cjs');
-  assert.equal(content[0].data, s.prepared.relayFile.data_uri);
-  assert.equal(content[1].text.includes(s.prepared.relayFile.data_uri), false);
-  assert.ok(Buffer.byteLength(content[1].text, 'utf8') < 160);
-
-  const changed = { ...s.prepared.relayFile, sha256: '0'.repeat(64) };
-  await assert.rejects(
-    client.createRelayTurn('session-1', s.prepared.expectedExecArguments, changed, 60_000),
-    /relay file bytes invalid/,
+  assert.deepEqual(content.map(part => part.type), ['file', 'file', 'file']);
+  assert.deepEqual(
+    content.map(part => part.name),
+    ['candidate-verifier.cjs', 'candidate-payload.json', 'candidate-command-manifest.json'],
   );
+  assert.deepEqual(content.map(part => part.data), s.prepared.outboundArtifacts.map(artifact => artifact.data_uri));
+
+  const changed = {
+    ...s.prepared,
+    outboundArtifacts: s.prepared.outboundArtifacts.map(artifact => artifact.role === 'payload'
+      ? { ...artifact, data_uri: `${artifact.data_uri.slice(0, -1)}A` }
+      : artifact),
+  };
+  await assert.rejects(
+    client.createRelayTurn('session-1', changed, 60_000),
+    /OUTBOUND_ARTIFACT_HASH_MISMATCH/,
+  );
+});
+
+test('T22-R outbound cardinality blocks zero, two, and four file parts before provider or session', async () => {
+  const prepared = findingState().prepared;
+  const cases = [
+    [],
+    prepared.outboundArtifacts.slice(0, 2),
+    [...prepared.outboundArtifacts, prepared.outboundArtifacts[0]],
+  ];
+  for (const outboundArtifacts of cases) {
+    const guarded = noAuthorityClient();
+    const evidence = await runCandidateVerification({
+      prepared: withOutboundArtifacts(prepared, outboundArtifacts),
+      client: guarded.client,
+    });
+    assert.deepEqual(evidence.failure_reasons, ['OUTBOUND_ARTIFACT_CARDINALITY_INVALID']);
+    assert.equal(evidence.session_id, '');
+    assert.equal(evidence.turn_id, '');
+    assert.deepEqual(guarded.calls, { provider: 0, session: 0, turn: 0 });
+  }
+});
+
+test('T23-R one changed outbound byte blocks before provider, session, turn, or spend', async () => {
+  const prepared = tamperArtifactData(findingState().prepared, 'payload');
+  const guarded = noAuthorityClient();
+  const evidence = await runCandidateVerification({ prepared, client: guarded.client });
+  assert.deepEqual(evidence.failure_reasons, ['OUTBOUND_ARTIFACT_HASH_MISMATCH']);
+  assert.equal(evidence.status, 'NOT_ESTABLISHED');
+  assert.equal(evidence.session_id, '');
+  assert.equal(evidence.turn_id, '');
+  assert.deepEqual(guarded.calls, { provider: 0, session: 0, turn: 0 });
+  const payloadArtifact = prepared.outboundArtifacts.find(artifact => artifact.role === 'payload');
+  const payloadEvidence = evidence.outbound_artifacts.find(artifact => artifact.role === 'payload');
+  assert.notEqual(payloadEvidence.sha256, payloadArtifact.sha256);
+});
+
+test('T24 a model-emitted 257-byte command blocks while the fixed command remains below 256', () => {
+  const prepared = findingState().prepared;
+  assert.equal(Buffer.byteLength(prepared.expectedExecArguments.command, 'utf8'), 130);
+  const events = successEvents(prepared);
+  const call = events.find(event => Array.isArray(event.tool_calls)).tool_calls[0];
+  call.function.arguments = canonicalJson({ command: 'x'.repeat(257) });
+  const evidence = reduceCandidateVerification({
+    events,
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(evidence.failure_reasons, ['EXEC_COMMAND_OVERSIZE']);
+});
+
+test('T25 verifier and manifest reports are compared by the harness with distinct reasons', () => {
+  const prepared = findingState().prepared;
+  const verifierMismatch = reduceCandidateVerification({
+    events: successEvents(prepared, { verifier_sha256: '0'.repeat(64) }),
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(verifierMismatch.failure_reasons, ['VERIFIER_IDENTITY_MISMATCH']);
+  assert.notEqual(verifierMismatch.result, null);
+
+  const manifestMismatch = reduceCandidateVerification({
+    events: successEvents(prepared, { command_manifest_sha256: '1'.repeat(64) }),
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(manifestMismatch.failure_reasons, ['MANIFEST_IDENTITY_MISMATCH']);
+  assert.notEqual(manifestMismatch.result, null);
+});
+
+test('T26 pre-submit assertion and evidence preserve the outbound-byte claim limit', () => {
+  const prepared = findingState().prepared;
+  const inspection = inspectPreparedTransport(prepared);
+  assert.deepEqual(inspection.failure_reasons, []);
+  assert.deepEqual(
+    inspection.outbound_artifacts.map(artifact => artifact.role),
+    ['manifest', 'payload', 'verifier'],
+  );
+  const forbidden = /\bpersisted\b|\bserver\b|upload identity/i;
+  assert.doesNotMatch(JSON.stringify({ outbound_artifacts: inspection.outbound_artifacts }), forbidden);
+
+  const tampered = tamperArtifactData(prepared, 'manifest');
+  let message = '';
+  try {
+    assertPreparedTransport(tampered);
+  } catch (error) {
+    message = error.message;
+  }
+  assert.match(message, /OUTBOUND_ARTIFACT_HASH_MISMATCH/);
+  assert.doesNotMatch(message, forbidden);
+});
+
+test('J14 non-Daytona configuration blocks before the relay session', async () => {
+  const prepared = findingState().prepared;
+  let sessions = 0;
+  const evidence = await runCandidateVerification({
+    prepared,
+    client: {
+      async assertDaytonaSandboxProvider() {
+        throw new Error('not Daytona');
+      },
+      async createRelaySession() { sessions += 1; return 'session-should-not-exist'; },
+    },
+  });
+  assert.deepEqual(evidence.failure_reasons, ['PROVIDER_CONFIGURATION_REJECTED']);
+  assert.equal(sessions, 0);
+  assert.equal(evidence.session_id, '');
+});
+
+test('J14b stock provider settings shape admits Daytona and rejects every other type', async () => {
+  const client = new JudgmentTrueForgeClient();
+  const requests = [];
+  client.request = async (method, path) => {
+    requests.push({ method, path });
+    return { data: { manifest: { type: 'daytona' } } };
+  };
+  await client.assertDaytonaSandboxProvider();
+  assert.deepEqual(requests, [{ method: 'GET', path: '/api/v1/settings/sandbox-providers' }]);
+
+  client.request = async () => ({ data: { manifest: { type: 'local' } } });
+  await assert.rejects(
+    client.assertDaytonaSandboxProvider(),
+    error => error?.code === 'PROVIDER_CONFIGURATION_REJECTED' && error?.status === 422,
+  );
+});
+
+test('J15 fixed verifier reports actual identities and rejects changed bytes offline', () => {
+  const prepared = findingState().prepared;
+  const root = mkdtempSync(join(tmpdir(), 'judgment-verifier-'));
+  const paths = Object.fromEntries(prepared.outboundArtifacts.map(artifact => [artifact.role, join(root, artifact.name)]));
+  const verifierBytes = outboundArtifactBytes(prepared, 'verifier');
+  const payloadBytes = outboundArtifactBytes(prepared, 'payload');
+  writeFileSync(paths.verifier, verifierBytes);
+  writeFileSync(paths.payload, payloadBytes);
+  const manifest = JSON.parse(outboundArtifactBytes(prepared, 'manifest').toString('utf8'));
+  manifest.transport.verifier_path = paths.verifier;
+  manifest.transport.payload_path = paths.payload;
+  manifest.transport.manifest_path = paths.manifest;
+  const manifestBytes = canonicalJsonBytes(manifest);
+  writeFileSync(paths.manifest, manifestBytes);
+
+  const child = spawnSync(process.execPath, [paths.verifier, paths.payload, paths.manifest], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stderr, '');
+  const result = JSON.parse(child.stdout);
+  assert.equal(result.verifier_sha256, prepared.verifierSha256);
+  assert.equal(result.payload_bundle_sha256, prepared.candidateBundleSha256);
+  assert.equal(result.command_manifest_sha256, sha256(manifestBytes));
+
+  const changedPayload = JSON.parse(payloadBytes.toString('utf8'));
+  changedPayload.files[0].data_base64 = Buffer.from('changed candidate bytes').toString('base64');
+  writeFileSync(paths.payload, canonicalJsonBytes(changedPayload));
+  const payloadMismatch = spawnSync(process.execPath, [paths.verifier, paths.payload, paths.manifest], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  assert.notEqual(payloadMismatch.status, 0);
+  assert.match(payloadMismatch.stderr, /PAYLOAD_IDENTITY_MISMATCH/);
+
+  writeFileSync(paths.payload, payloadBytes);
+  writeFileSync(paths.verifier, Buffer.concat([verifierBytes, Buffer.from('\n')]));
+  const verifierMismatch = spawnSync(process.execPath, [paths.verifier, paths.payload, paths.manifest], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  assert.notEqual(verifierMismatch.status, 0);
+  assert.match(verifierMismatch.stderr, /VERIFIER_IDENTITY_MISMATCH/);
 });
