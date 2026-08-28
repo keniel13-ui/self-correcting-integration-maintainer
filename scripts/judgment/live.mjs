@@ -295,9 +295,12 @@ export function reduceCandidateVerification({
   const failures = new Set(preflight);
   const preflightBlocked = preflight.length > 0;
   if (!Array.isArray(events)) events = [];
+  const sandboxEvents = events.filter(event => event?.type === 'sandbox.created');
   const sandboxIds = createdSandboxIds(events);
   if (!preflightBlocked && turnStatus !== 'done') failures.add('TURN_NOT_DONE');
-  if (!preflightBlocked && sandboxIds.length !== 1) failures.add('SANDBOX_EVENT_CARDINALITY_INVALID');
+  if (!preflightBlocked && (sandboxEvents.length !== 1 || sandboxIds.length !== 1)) {
+    failures.add('SANDBOX_EVENT_CARDINALITY_INVALID');
+  }
   const calls = events.flatMap(event => Array.isArray(event?.tool_calls) ? event.tool_calls : []);
   const call = calls.length === 1 ? calls[0] : null;
   if (!preflightBlocked && (!call || call?.function?.name !== 'exec' || call?.tool_info?.type !== 'truefoundry-system' ||

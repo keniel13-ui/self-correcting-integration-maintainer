@@ -356,6 +356,25 @@ test('J07 candidate verification requires persisted call, nested response, exit 
   assert.ok(nonzero.failure_reasons.includes('CANDIDATE_EXIT_NONZERO'));
 });
 
+test('J07b duplicate or malformed sandbox creation events fail raw cardinality', () => {
+  const prepared = findingState().prepared;
+  const base = successEvents(prepared);
+  const variants = [
+    [base[0], base[0], ...base.slice(1)],
+    [base[0], { type: 'sandbox.created', sandbox_id: 'malformed' }, ...base.slice(1)],
+  ];
+  for (const events of variants) {
+    const evidence = reduceCandidateVerification({
+      events,
+      turnStatus: 'done',
+      prepared,
+      cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+    });
+    assert.deepEqual(evidence.failure_reasons, ['SANDBOX_EVENT_CARDINALITY_INVALID']);
+    assert.equal(evidence.status, 'NOT_ESTABLISHED');
+  }
+});
+
 test('J08 proposal schema cannot represent approval or application', () => {
   const s = findingState();
   const verification = successVerification(s.prepared);
