@@ -11,7 +11,7 @@ import {
   MAX_SANDBOX_TURN_MS,
   RUNTIME_TOOL_SURFACE_SHA256,
 } from './constants.mjs';
-import { parseCandidateResult } from './candidate.mjs';
+import { CANDIDATE_VERIFICATION_INTENT, parseCandidateResult } from './candidate.mjs';
 import {
   assertJudgmentRuntimeInstallation,
   assertReturnedJudgmentSessionConfig,
@@ -33,6 +33,7 @@ const FAILURE_ORDER = [
   'TOOL_RESPONSE_CARDINALITY_INVALID',
   'TOOL_RESPONSE_ID_MISMATCH',
   'EXEC_RESPONSE_SHAPE_UNEXPECTED',
+  'SANDBOX_EXEC_NONZERO',
   'SANDBOX_RESULT_INVALID',
   'VERIFIER_IDENTITY_MISMATCH',
   'MANIFEST_IDENTITY_MISMATCH',
@@ -141,8 +142,14 @@ export function inspectPreparedTransport(prepared) {
       }
     }
   }
-  const command = prepared?.expectedExecArguments?.command;
-  if (typeof command !== 'string' || command.length === 0) {
+  const expectedArguments = prepared?.expectedExecArguments;
+  const command = expectedArguments?.command;
+  const argumentKeys = expectedArguments && typeof expectedArguments === 'object' && !Array.isArray(expectedArguments)
+    ? Object.keys(expectedArguments).sort()
+    : [];
+  if (argumentKeys.length !== 2 || argumentKeys[0] !== 'command' || argumentKeys[1] !== 'intent' ||
+      expectedArguments.intent !== CANDIDATE_VERIFICATION_INTENT ||
+      typeof command !== 'string' || command.length === 0) {
     failures.add('EXEC_ARGUMENTS_MISMATCH');
   } else if (Buffer.byteLength(command, 'utf8') > 256) {
     failures.add('EXEC_COMMAND_OVERSIZE');
@@ -456,10 +463,15 @@ function parseResponseContent(content) {
   const envelope = typeof content === 'string' ? parseStrictJson(content) : content;
   assertClosedObject(envelope, ['success', 'response'], 'exec response envelope');
   assertClosedObject(envelope.response, ['exitCode', 'result'], 'exec response');
-  if (envelope.success !== true || envelope.response.exitCode !== 0 || typeof envelope.response.result !== 'string') {
-    throw new TypeError('exec response rejected');
+  if (typeof envelope.success !== 'boolean' || !Number.isSafeInteger(envelope.response.exitCode) ||
+      typeof envelope.response.result !== 'string') {
+    throw new TypeError('exec response shape invalid');
   }
-  return envelope.response.result;
+  return {
+    success: envelope.success,
+    exitCode: envelope.response.exitCode,
+    result: envelope.response.result,
+  };
 }
 
 export function reduceCandidateVerification({
@@ -502,12 +514,19 @@ export function reduceCandidateVerification({
   const responses = events.filter(event => event?.type === 'tool.response');
   const response = responses.length === 1 ? responses[0] : null;
   let result = null;
+  let sandboxExecExitCode = null;
   if (!preflightBlocked && responses.length !== 1) failures.add('TOOL_RESPONSE_CARDINALITY_INVALID');
   if (response && (!call || response.tool_call_id !== call.id)) failures.add('TOOL_RESPONSE_ID_MISMATCH');
   if (response && call && response.tool_call_id === call.id) {
     let resultText;
     try {
-      resultText = parseResponseContent(response.content);
+      const parsedResponse = parseResponseContent(response.content);
+      sandboxExecExitCode = parsedResponse.exitCode;
+      if (parsedResponse.success !== true || parsedResponse.exitCode !== 0) {
+        failures.add('SANDBOX_EXEC_NONZERO');
+      } else {
+        resultText = parsedResponse.result;
+      }
     } catch {
       failures.add('EXEC_RESPONSE_SHAPE_UNEXPECTED');
     }
@@ -551,6 +570,7 @@ export function reduceCandidateVerification({
     payload_bundle_sha256: prepared.candidateBundleSha256,
     outbound_artifacts: outboundArtifacts,
     sandbox_ids: sandboxIds,
+    sandbox_exec_exit_code: sandboxExecExitCode,
     result,
     cleanup,
     status: failureReasons.length === 0 ? 'VERIFIED_IN_DAYTONA' : 'NOT_ESTABLISHED',

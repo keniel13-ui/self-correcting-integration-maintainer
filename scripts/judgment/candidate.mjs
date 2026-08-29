@@ -16,6 +16,7 @@ const ARTIFACT_NAMES = Object.freeze({
 });
 const UPLOAD_DIR = '/opt/tf/uploads';
 const artifactPath = role => `${UPLOAD_DIR}/${ARTIFACT_NAMES[role]}`;
+export const CANDIDATE_VERIFICATION_INTENT = 'Run candidate verification';
 
 // V6 §4A.2: this source closes over no run-specific value. T21 compares
 // its exact bytes across preparations with different inputs and manifests.
@@ -103,9 +104,13 @@ export function prepareCandidateVerification({ corpus, finding }) {
     schema: 'candidate_payload/v1',
     files: files.map(file => ({ path: file.path, data_base64: file.bytes.toString('base64') })),
   });
-  const expectedExecArguments = validateExecArguments({
+  const command = validateExecArguments({
     command: `node ${artifactPath('verifier')} ${artifactPath('payload')} ${artifactPath('manifest')}`,
-  });
+  }).command;
+  const expectedExecArguments = {
+    command,
+    intent: CANDIDATE_VERIFICATION_INTENT,
+  };
   if (Buffer.byteLength(expectedExecArguments.command, 'utf8') > 256) {
     throw new TypeError('exec command exceeds 256 bytes');
   }

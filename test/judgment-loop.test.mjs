@@ -44,6 +44,7 @@ import { recomputeFinding } from '../scripts/judgment/recompute.mjs';
 import { executeJudgmentLoop } from '../scripts/judgment/run.mjs';
 
 const sandboxId = 'v1:daytona:default.12345678-1234-1234-1234-123456789abc';
+const FIXED_EXEC_INTENT = 'Run candidate verification';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'judgment-corpus-'));
@@ -593,8 +594,8 @@ test('J06 exact repair changes only the named file and binds the complete result
       '/opt/tf/uploads/candidate-command-manifest.json',
   );
   assert.equal(Buffer.byteLength(s.prepared.expectedExecArguments.command, 'utf8'), 130);
-  assert.equal(Buffer.byteLength(JSON.stringify(s.prepared.expectedExecArguments), 'utf8'), 144);
-  assert.equal(canonicalJsonBytes(s.prepared.expectedExecArguments).length, 145);
+  assert.equal(Buffer.byteLength(JSON.stringify(s.prepared.expectedExecArguments), 'utf8'), 182);
+  assert.equal(canonicalJsonBytes(s.prepared.expectedExecArguments).length, 183);
   assert.deepEqual(s.prepared.outboundArtifacts.map(artifact => artifact.role), ['verifier', 'payload', 'manifest']);
   for (const artifact of s.prepared.outboundArtifacts) {
     const encoded = artifact.data_uri.split(',', 2)[1];
@@ -975,6 +976,72 @@ test('T24 a model-emitted 257-byte command blocks while the fixed command remain
     cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
   });
   assert.deepEqual(evidence.failure_reasons, ['EXEC_COMMAND_OVERSIZE']);
+});
+
+test('A1 exec arguments missing the fixed intent fail closed', () => {
+  const prepared = findingState().prepared;
+  assert.equal(prepared.expectedExecArguments.intent, FIXED_EXEC_INTENT);
+  const events = successEvents(prepared);
+  const call = events.find(event => Array.isArray(event.tool_calls)).tool_calls[0];
+  call.function.arguments = canonicalJson({ command: prepared.expectedExecArguments.command });
+  const evidence = reduceCandidateVerification({
+    events,
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(evidence.failure_reasons, ['EXEC_ARGUMENTS_MISMATCH']);
+});
+
+test('A2 exec arguments with an unexpected third key fail closed', () => {
+  const prepared = findingState().prepared;
+  assert.equal(prepared.expectedExecArguments.intent, FIXED_EXEC_INTENT);
+  const events = successEvents(prepared);
+  const call = events.find(event => Array.isArray(event.tool_calls)).tool_calls[0];
+  call.function.arguments = canonicalJson({ ...prepared.expectedExecArguments, extra: true });
+  const evidence = reduceCandidateVerification({
+    events,
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(evidence.failure_reasons, ['EXEC_ARGUMENTS_MISMATCH']);
+});
+
+test('A3 exec arguments with a one-byte intent change fail closed', () => {
+  const prepared = findingState().prepared;
+  assert.equal(prepared.expectedExecArguments.intent, FIXED_EXEC_INTENT);
+  const events = successEvents(prepared);
+  const call = events.find(event => Array.isArray(event.tool_calls)).tool_calls[0];
+  call.function.arguments = canonicalJson({
+    ...prepared.expectedExecArguments,
+    intent: `${FIXED_EXEC_INTENT.slice(0, -1)}o`,
+  });
+  const evidence = reduceCandidateVerification({
+    events,
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(evidence.failure_reasons, ['EXEC_ARGUMENTS_MISMATCH']);
+});
+
+test('B1 a valid Run 004 envelope with exitCode 127 is nonzero execution, not malformed output', () => {
+  const prepared = findingState().prepared;
+  const events = successEvents(prepared);
+  const response = events.find(event => event.type === 'tool.response');
+  response.content = '{"success":true,"response":{"exitCode":127,"result":"/usr/bin/bash: line 1: node: command not found\\n"}}';
+  const evidence = reduceCandidateVerification({
+    events,
+    turnStatus: 'done',
+    prepared,
+    cleanup: { attempted_ids: [sandboxId], confirmed_absent_ids: [sandboxId], unconfirmed_ids: [] },
+  });
+  assert.deepEqual(evidence.failure_reasons, ['SANDBOX_EXEC_NONZERO']);
+  assert.equal(evidence.sandbox_exec_exit_code, 127);
+  assert.equal(evidence.result, null);
+  assert.equal(evidence.failure_reasons.includes('EXEC_RESPONSE_SHAPE_UNEXPECTED'), false);
+  assert.equal(evidence.failure_reasons.includes('CANDIDATE_RESULT_INVALID'), false);
 });
 
 test('T25 verifier and manifest reports are compared by the harness with distinct reasons', () => {
