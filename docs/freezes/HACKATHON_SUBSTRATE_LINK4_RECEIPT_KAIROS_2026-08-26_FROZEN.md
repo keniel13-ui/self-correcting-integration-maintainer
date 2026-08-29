@@ -2,13 +2,8 @@
 
 **Seat:** Kairos / Codex  
 **Date:** 2026-08-26 EDT  
-**Authority:** [`BRIEF_KAIROS_2026-08-26.md`](BRIEF_KAIROS_2026-08-26.md) SHA-256 `7f2784033076c8e4b269a263f43f057514b4e2fbde422e0b6b35dbff1dc9e1ed`
+**Authority:** `BRIEF_KAIROS_2026-08-26.md` SHA-256 `7f2784033076c8e4b269a263f43f057514b4e2fbde422e0b6b35dbff1dc9e1ed`  
 **Status:** `LINK_4_PROVEN / SUBSTRATE_VERIFIED / AGENT_NOT_BUILT`
-
-**Custody note, 2026-08-29:** this display successor adds only the authority link above. The exact
-original receipt bytes remain preserved as
-[`HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26_FROZEN.md`](HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26_FROZEN.md),
-SHA-256 `f22fd4384cf266851fba1067492832fc53524ec92ee5d3a32653f49a0a3803d0`.
 
 ## Observed blocker
 

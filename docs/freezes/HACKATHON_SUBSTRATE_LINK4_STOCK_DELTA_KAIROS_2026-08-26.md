@@ -4,10 +4,12 @@
 **Date:** 2026-08-26 EDT  
 **Status:** `LINK4_PROVEN_ON_STOCK / COMPATIBILITY_PATCH_RETIRED`
 
-This supersedes only the reproducibility ceiling in
-[`HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md`](HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md)
+This supersedes only the reproducibility ceiling in the exact frozen receipt
+[`HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26_FROZEN.md`](HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26_FROZEN.md)
 (SHA-256 `f22fd4384cf266851fba1067492832fc53524ec92ee5d3a32653f49a0a3803d0`). The earlier
-locally patched run remains historical evidence and is not rewritten.
+locally patched run remains historical evidence and is not rewritten. A
+[`display successor`](HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md) adds a direct link to
+the exact authority brief without claiming the frozen receipt's identity.
 
 ## Permission receipt
 

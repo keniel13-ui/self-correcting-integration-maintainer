@@ -36,9 +36,11 @@ on faith—and anyone who has watched a green test suite prove nothing.
 
 TrueForge is the substrate, not a wrapper:
 
-1. **Judgment session.** The model runs with `iteration_limit: 2`, provider-enforced structured JSON,
-   and every optional capability disabled: no sub-agents, generative UI, user questions, file
-   downloads, or sandbox.
+1. **Judgment session.** [`JUDGMENT_SESSION_CONFIG`](../scripts/judgment/constants.mjs) sets
+   `iteration_limit: 2` and disables every optional capability: sub-agents, generative UI, user
+   questions, file downloads, and sandbox. [`JUDGMENT_RESPONSE_FORMAT`](../scripts/judgment/constants.mjs)
+   is a strict closed `json_schema`; [`createJudgmentSession`](../scripts/judgment/live.mjs) sends
+   both objects and fails closed unless TrueForge returns byte-equivalent values.
 2. **Persisted event evidence.** After every turn, the harness retrieves and audits TrueForge's own
    event record. Final model content can never stand in for that evidence.
 3. **Daytona relay.** A proposed repair is transported as three hash-bound artifacts into an
@@ -96,7 +98,7 @@ evidence and is not presented as such.
 The historical Link 4 evidence chain is public and hash-checkable:
 [`BRIEF_KAIROS_2026-08-26.md`](freezes/BRIEF_KAIROS_2026-08-26.md) (SHA-256
 `7f2784033076c8e4b269a263f43f057514b4e2fbde422e0b6b35dbff1dc9e1ed`) authorized the
-[`LINK4_RECEIPT`](freezes/HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md) (SHA-256
+[`LINK4_RECEIPT`](freezes/HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26_FROZEN.md) (SHA-256
 `f22fd4384cf266851fba1067492832fc53524ec92ee5d3a32653f49a0a3803d0`), which the
 [`LINK4_STOCK_DELTA`](freezes/HACKATHON_SUBSTRATE_LINK4_STOCK_DELTA_KAIROS_2026-08-26.md)
 supersedes only on reproducibility. The later cleanup metadata is explicitly a maker report: its
