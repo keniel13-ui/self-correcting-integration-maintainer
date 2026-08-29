@@ -26,8 +26,9 @@ committed the defect classes we already knew about before execution in
 `NEW` claim that cites one. Editing the file changes its identity; it cannot silently rewrite which
 knowledge governed a completed run.
 
-The agent found a real condition in never-published code. Then it reported that the condition was
-already known.
+The agent returned a concrete claim tied to exact bytes in never-published code, then self-reported
+it as already known. Inspection later showed both the interpretation and the class match were wrong
+— which is the measured boundary this project exists to find, not a footnote to it.
 
 **Who it is for:** teams who need an agent's report to be checkable by a stranger rather than taken
 on faith—and anyone who has watched a green test suite prove nothing.
@@ -70,15 +71,21 @@ Qodo's controlling review on PR #4 reports `Bugs (0)` and `Rule violations (0)` 
 
 One Qodo finding became the experiment's control. It caught an empty-collection check where
 `providerConfigured({"data":[]})` returned configured. That class became **K1** in the frozen known
-conditions. Days later, the judgment agent found K1's mechanism in the unpublished corpus and
-classified it `CONFIRMS_KNOWN` rather than claiming a discovery.
+conditions. Days later, the judgment agent returned a superficially similar condition in the unpublished corpus
+and self-classified it `CONFIRMS_KNOWN` rather than claiming a discovery. Inspection showed that
+class match was wrong.
 
 ## What the live evidence establishes
 
 Run 004 established the following rungs:
 
 - provider-enforced structured output produced directly parseable JSON;
-- the agent returned one bounded repair and classified its finding `CONFIRMS_KNOWN / K1`;
+- the agent returned one bounded repair in `forms.mjs` and self-reported it `CONFIRMS_KNOWN / K1`.
+  That classification is **not established**. The runner hardcodes `classification_correct: false`
+  *if* it writes an artifact; this run threw first and wrote none. The receipt instead lists "the
+  semantic correctness of the CONFIRMS_KNOWN / K1 classification" as not established, and a human
+  read found the K1 match wrong. The full raw response is preserved in
+  [`docs/freezes/RUN_004_RECEIPT.json`](freezes/RUN_004_RECEIPT.json);
 - the harness prepared and transported three hash-bound artifacts;
 - TrueForge created a Daytona sandbox and persisted one matching `exec` call and response;
 - the sandbox executed the command and returned `exitCode: 127` with
@@ -161,11 +168,13 @@ actual evidence rungs rather than collapsed into one green label.
 
 *[Screen: the Run 004 model result and persisted events]*
 
-> It found that missing lab results become an empty list and the `labs.length > 0` guard evaluates
-> false. The release decision reads absence as a pass.
+> It found that when no file passes the filter the process exits 2, while a non-empty result is
+> written to stdout and exits 0. The agent argued a caller cannot distinguish those cases from the
+> exit code; it can, and that consequence does not hold. The bytes it quoted are exact and the patch
+> is bounded, but the interpretation and the K1 class match both fail inspection.
 >
-> Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It found a real condition and told me it
-> was not new, against knowledge frozen before the run.
+> Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It marked its own claim as not new,
+> against knowledge frozen before the run. That class match does not survive inspection.
 >
 > The repair then entered the Daytona relay as three hash-bound artifacts. `sandbox.created`. One
 > real command. One real response.
