@@ -4,8 +4,18 @@ import { cleanupSandboxes, createdSandboxIds } from '../pr2/cleanup.mjs';
 import { sha256 } from '../pr2/inputs.mjs';
 import { daytonaCleanupProvider } from '../pr2/run.mjs';
 import { BoundedHttpError, TrueForgeClient } from '../pr2/trueforge-client.mjs';
-import { MAX_MODEL_TURN_MS, MAX_SANDBOX_TURN_MS } from './constants.mjs';
+import {
+  JUDGMENT_RESPONSE_FORMAT,
+  JUDGMENT_SESSION_CONFIG,
+  MAX_MODEL_TURN_MS,
+  MAX_SANDBOX_TURN_MS,
+  RUNTIME_TOOL_SURFACE_SHA256,
+} from './constants.mjs';
 import { parseCandidateResult } from './candidate.mjs';
+import {
+  assertJudgmentRuntimeInstallation,
+  assertReturnedJudgmentSessionConfig,
+} from './runtime-surface.mjs';
 
 const TERMINAL = new Set(['done', 'error', 'cancelled']);
 const FAILURE_ORDER = [
@@ -40,6 +50,19 @@ const OUTBOUND_ARTIFACT_KEYS = [
 ];
 const EMPTY_SHA256 = sha256(Buffer.alloc(0));
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
+const JUDGMENT_EVENT_FAILURE_ORDER = [
+  'JUDGMENT_EVENTS_UNAVAILABLE',
+  'JUDGMENT_EVENT_SHAPE_INVALID',
+  'JUDGMENT_FORBIDDEN_EVENT',
+  'JUDGMENT_TURN_NOT_DONE',
+  'JUDGMENT_TERMINAL_EVENT_CARDINALITY_INVALID',
+  'JUDGMENT_TOOL_CALL_CARDINALITY_INVALID',
+  'JUDGMENT_TOOL_CALL_SHAPE_INVALID',
+  'JUDGMENT_TOOL_ARGUMENTS_INVALID',
+  'JUDGMENT_TOOL_RESPONSE_CARDINALITY_INVALID',
+  'JUDGMENT_TOOL_RESPONSE_ID_MISMATCH',
+];
+const JUDGMENT_EVENT_TYPES = new Set(['turn.created', 'model.message', 'tool.response', 'turn.done']);
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -155,11 +178,26 @@ export class JudgmentTrueForgeClient extends TrueForgeClient {
             params: { max_tokens: 4096, temperature: 0 },
           },
           instructions,
-          config: { iteration_limit: 1, sandbox: { enabled: false } },
+          response_format: JUDGMENT_RESPONSE_FORMAT,
+          config: JUDGMENT_SESSION_CONFIG,
         },
       },
     });
-    return requireId(body, 'SESSION_ID_ABSENT');
+    const sessionId = requireId(body, 'SESSION_ID_ABSENT');
+    try {
+      assertReturnedJudgmentSessionConfig(
+        body?.data?.agent?.spec?.config,
+        body?.data?.agent?.spec?.response_format,
+      );
+    } catch (error) {
+      await this.cancelSession(sessionId);
+      const code = error instanceof Error &&
+          /^JUDGMENT_(?:SESSION_CONFIG|RESPONSE_FORMAT)_[A-Z]+/.test(error.message)
+        ? error.message
+        : 'JUDGMENT_SESSION_SPEC_MALFORMED';
+      throw new BoundedHttpError(code, 422);
+    }
+    return sessionId;
   }
 
   async createRelaySession(prepared) {
@@ -250,26 +288,168 @@ async function observeEvents(client, sessionId, turnId, sleep = delay) {
   return { observed: false, events: [] };
 }
 
-export async function runJudgmentModel({ prompt, instructions, client = new JudgmentTrueForgeClient() }) {
+function plainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function exactKeys(value, wanted) {
+  if (!plainObject(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...wanted].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function responseContentSha256(content) {
+  if (typeof content === 'string') return sha256(Buffer.from(content, 'utf8'));
+  return sha256(canonicalJsonBytes(content));
+}
+
+export function reduceJudgmentExecution({
+  events,
+  eventsObserved = Array.isArray(events),
+  turnStatus,
+  sessionId = '',
+  turnId = '',
+}) {
+  const failures = new Set();
+  if (!eventsObserved) failures.add('JUDGMENT_EVENTS_UNAVAILABLE');
+  const list = Array.isArray(events) ? events : [];
+  let persistedEventsSha256 = null;
+  try {
+    persistedEventsSha256 = sha256(canonicalJsonBytes(list));
+  } catch {
+    failures.add('JUDGMENT_EVENT_SHAPE_INVALID');
+  }
+
+  for (const event of list) {
+    if (!plainObject(event) || typeof event.type !== 'string' || event.type.length === 0) {
+      failures.add('JUDGMENT_EVENT_SHAPE_INVALID');
+      continue;
+    }
+    if (!JUDGMENT_EVENT_TYPES.has(event.type)) failures.add('JUDGMENT_FORBIDDEN_EVENT');
+    if (Object.hasOwn(event, 'tool_calls') && !Array.isArray(event.tool_calls)) {
+      failures.add('JUDGMENT_EVENT_SHAPE_INVALID');
+    }
+  }
+
+  if (turnStatus !== 'done') failures.add('JUDGMENT_TURN_NOT_DONE');
+  const terminal = list.filter(event => event?.type === 'turn.done');
+  if (terminal.length !== 1 || terminal[0]?.state?.status !== turnStatus) {
+    failures.add('JUDGMENT_TERMINAL_EVENT_CARDINALITY_INVALID');
+  }
+
+  const calls = list.flatMap(event => Array.isArray(event?.tool_calls) ? event.tool_calls : []);
+  if (calls.length > 1) failures.add('JUDGMENT_TOOL_CALL_CARDINALITY_INVALID');
+  const call = calls.length === 1 ? calls[0] : null;
+  let normalizedCall = null;
+  if (call) {
+    const idValid = typeof call.id === 'string' && call.id.length > 0 &&
+      Buffer.byteLength(call.id, 'utf8') <= 256 && calls.filter(item => item?.id === call.id).length === 1;
+    const callShapeValid = exactKeys(call, ['id', 'type', 'function', 'tool_info']) &&
+      call.type === 'function' && idValid &&
+      exactKeys(call.tool_info, ['type', 'name']) &&
+      call.tool_info.type === 'truefoundry-system' &&
+      call.tool_info.name === 'get_current_datetime' &&
+      exactKeys(call.function, ['name', 'arguments']) &&
+      call.function.name === 'get_current_datetime';
+    if (!callShapeValid) failures.add('JUDGMENT_TOOL_CALL_SHAPE_INVALID');
+    const argumentsEmpty = call?.function?.arguments === '' ||
+      (plainObject(call?.function?.arguments) && Object.keys(call.function.arguments).length === 0);
+    if (!argumentsEmpty) failures.add('JUDGMENT_TOOL_ARGUMENTS_INVALID');
+    normalizedCall = {
+      id: typeof call.id === 'string' ? call.id : '',
+      type: call.type ?? null,
+      tool_info: plainObject(call.tool_info) ? call.tool_info : null,
+      function_name: call?.function?.name ?? null,
+      arguments_empty: argumentsEmpty,
+    };
+  }
+
+  const responses = list.filter(event => event?.type === 'tool.response');
+  if (responses.length !== calls.length) failures.add('JUDGMENT_TOOL_RESPONSE_CARDINALITY_INVALID');
+  let responseDigest = null;
+  if (call && responses.length === 1) {
+    if (responses[0]?.tool_call_id !== call.id) {
+      failures.add('JUDGMENT_TOOL_RESPONSE_ID_MISMATCH');
+    } else {
+      try {
+        responseDigest = responseContentSha256(responses[0].content);
+      } catch {
+        failures.add('JUDGMENT_EVENT_SHAPE_INVALID');
+      }
+    }
+  } else if (!call && responses.length > 0) {
+    failures.add('JUDGMENT_TOOL_RESPONSE_ID_MISMATCH');
+  }
+
+  const failureReasons = JUDGMENT_EVENT_FAILURE_ORDER.filter(reason => failures.has(reason));
+  return {
+    schema: 'judgment_execution_evidence/v1',
+    session_id: sessionId,
+    turn_id: turnId,
+    persisted_events_sha256: persistedEventsSha256,
+    event_count: list.length,
+    terminal_status: terminal.length === 1 ? terminal[0]?.state?.status ?? null : null,
+    availability: {
+      runtime_tool_surface_sha256: RUNTIME_TOOL_SURFACE_SHA256,
+      available_tool_count: 1,
+    },
+    exercise: {
+      tool_call_count: calls.length,
+      tool_response_count: responses.length,
+      call: normalizedCall,
+      response_content_sha256: responseDigest,
+    },
+    status: failureReasons.length === 0 ? 'ESTABLISHED' : 'NOT_ESTABLISHED',
+    failure_reasons: failureReasons,
+  };
+}
+
+export async function runJudgmentModel({
+  prompt,
+  instructions,
+  client = new JudgmentTrueForgeClient(),
+  runtimeGate = assertJudgmentRuntimeInstallation,
+}) {
+  const runtimePreflight = runtimeGate();
   const sessionId = await client.createJudgmentSession(instructions);
   let turnId = '';
+  let turn = null;
+  let observed = { observed: false, events: [] };
   try {
     const deadline = Date.now() + MAX_MODEL_TURN_MS;
     turnId = await client.createMessageTurn(sessionId, prompt, Math.max(1, deadline - Date.now()));
-    const turn = await pollTurn(client, sessionId, turnId, deadline);
-    if (turn?.state?.status !== 'done' || typeof turn?.state?.output?.content !== 'string') {
-      throw new BoundedHttpError('JUDGMENT_TURN_NOT_DONE');
-    }
-    return {
-      sessionId,
-      turnId,
-      content: turn.state.output.content,
-      usage: turn.state.output.usage ?? null,
-    };
-  } catch (error) {
-    await client.cancelSession(sessionId);
-    throw error;
+    turn = await pollTurn(client, sessionId, turnId, deadline);
+  } finally {
+    if (turnId) observed = await observeEvents(client, sessionId, turnId);
+    if (!observed.observed || turn?.state?.status !== 'done') await client.cancelSession(sessionId);
   }
+  const executionEvidence = reduceJudgmentExecution({
+    events: observed.events,
+    eventsObserved: observed.observed,
+    turnStatus: turn?.state?.status ?? 'error',
+    sessionId,
+    turnId,
+  });
+  if (executionEvidence.status !== 'ESTABLISHED') {
+    throw new BoundedHttpError(
+      `JUDGMENT_EVENT_GATE_FAILED_${executionEvidence.failure_reasons.join('_')}`,
+      422,
+    );
+  }
+  if (typeof turn?.state?.output?.content !== 'string') {
+    throw new BoundedHttpError('JUDGMENT_TURN_NOT_DONE');
+  }
+  return {
+    sessionId,
+    turnId,
+    content: turn.state.output.content,
+    usage: turn.state.output.usage ?? null,
+    runtimePreflight,
+    executionEvidence,
+    persistedEvents: observed.events,
+  };
 }
 
 function parseResponseContent(content) {

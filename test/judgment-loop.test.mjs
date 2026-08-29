@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { canonicalJson, canonicalJsonBytes } from '../scripts/pr2/canonical.mjs';
@@ -11,6 +11,7 @@ import {
   buildAgentPrompt,
   instructionSha256,
   loadCorpus,
+  runtimeToolSurfaceSha256,
   toolsSha256,
   validateAgentResponse,
   validateCorpusManifest,
@@ -19,8 +20,12 @@ import {
 import {
   AGENT_CAPABILITIES,
   AGENT_CAPABILITY_MANIFEST_SHA256,
+  CALLER_TOOL_DESCRIPTIONS_SHA256,
   CHANGE_PROPOSAL_SCHEMA_SHA256,
   JUDGMENT_CONTRACT_SHA256,
+  JUDGMENT_RESPONSE_FORMAT,
+  JUDGMENT_SESSION_CONFIG,
+  RUNTIME_TOOL_SURFACE_SHA256,
   SYSTEM_INSTRUCTIONS,
   TOOL_DESCRIPTIONS,
 } from '../scripts/judgment/constants.mjs';
@@ -29,8 +34,11 @@ import {
   inspectPreparedTransport,
   JudgmentTrueForgeClient,
   reduceCandidateVerification,
+  reduceJudgmentExecution,
   runCandidateVerification,
+  runJudgmentModel,
 } from '../scripts/judgment/live.mjs';
+import { assertJudgmentRuntimeInstallation } from '../scripts/judgment/runtime-surface.mjs';
 import { validateChangeProposal } from '../scripts/judgment/proposal.mjs';
 import { recomputeFinding } from '../scripts/judgment/recompute.mjs';
 import { executeJudgmentLoop } from '../scripts/judgment/run.mjs';
@@ -59,17 +67,17 @@ function fixture() {
   };
   const manifestBytes = canonicalJsonBytes(manifest);
   const prior = {
-    schema: 'prior_knowledge/v1',
+    schema: 'prior_knowledge/v2',
     what_the_agent_is_given: {
       instructions_sha256: instructionSha256(),
-      tools_sha256: toolsSha256(),
+      caller_tool_descriptions_sha256: toolsSha256(),
+      runtime_tool_surface_sha256: runtimeToolSurfaceSha256(),
+      runtime_tool_surface_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
       corpus_manifest_sha256: sha256(manifestBytes),
     },
-    known_conditions: [{
-      id: 'K5',
-      name: 'signal nobody consumes',
-      description: 'A known defect class where a computed signal is not consumed by the deciding path.',
-    }],
+    known_conditions: structuredClone(
+      JSON.parse(readFileSync('docs/contracts/PRIOR_KNOWLEDGE.json')).known_conditions,
+    ),
   };
   return { root, text, manifest, manifestBytes, prior, priorBytes: canonicalJsonBytes(prior) };
 }
@@ -100,7 +108,9 @@ function state(f = fixture()) {
   const corpus = loadCorpus({ corpusRoot: f.root, manifestBytes: f.manifestBytes });
   const priorState = validatePriorKnowledge(f.priorBytes, {
     instructions_sha256: instructionSha256(),
-    tools_sha256: toolsSha256(),
+    caller_tool_descriptions_sha256: toolsSha256(),
+    runtime_tool_surface_sha256: runtimeToolSurfaceSha256(),
+    runtime_tool_surface_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
     corpus_manifest_sha256: corpus.manifestSha256,
   });
   return { f, corpus, priorState };
@@ -242,6 +252,265 @@ function successVerification(prepared) {
   });
 }
 
+function judgmentEvents({ withClock = false, callChanges = {}, extraEvents = [] } = {}) {
+  const events = [{ type: 'turn.created', id: 'judgment-event-created', state: { status: 'running' } }];
+  if (withClock) {
+    const call = {
+      id: 'clock-call-1',
+      type: 'function',
+      function: { name: 'get_current_datetime', arguments: '' },
+      tool_info: { type: 'truefoundry-system', name: 'get_current_datetime' },
+      ...callChanges,
+    };
+    events.push({ type: 'model.message', id: 'judgment-event-tool', tool_calls: [call] });
+    events.push({
+      type: 'tool.response',
+      id: 'judgment-event-response',
+      tool_call_id: call.id,
+      content: '{"iso":"2026-08-28T15:20:38.131Z","unixEpochMS":1787930438131}',
+    });
+  }
+  events.push(...extraEvents);
+  events.push({ type: 'model.message', id: 'judgment-event-final', content: response() });
+  events.push({ type: 'turn.done', id: 'judgment-event-done', state: { status: 'done' } });
+  return events;
+}
+
+function successfulJudgmentModel(content = response(), { withClock = false } = {}) {
+  const persistedEvents = judgmentEvents({ withClock });
+  const executionEvidence = reduceJudgmentExecution({
+    events: persistedEvents,
+    eventsObserved: true,
+    turnStatus: 'done',
+    sessionId: 'judgment-session-1',
+    turnId: 'judgment-turn-1',
+  });
+  assert.equal(executionEvidence.status, 'ESTABLISHED');
+  return {
+    content,
+    usage: { input_tokens: 100, output_tokens: 20 },
+    runtimePreflight: assertJudgmentRuntimeInstallation(),
+    persistedEvents,
+    executionEvidence,
+  };
+}
+
+test('V5-T1 declared minimum surface matches the single unavoidable stock TrueForge tool', async () => {
+  const expectedConfig = {
+    iteration_limit: 2,
+    sandbox: { enabled: false, file_downloads: false },
+    dynamic_sub_agents: { enabled: false },
+    context_management: {
+      compaction: { enabled: false },
+      large_tool_response: { enabled: false },
+    },
+    generative_ui: { enabled: false },
+    ask_user_questions: { enabled: false },
+  };
+  const logger = { child() { return this; } };
+  const [{ AgentSpecSchema }, { builtinsFromSpec }, constants] = await Promise.all([
+    import('../node_modules/@truefoundry/trueforge-core/dist/agent-session/schemas/agentSpec.mjs'),
+    import('../node_modules/@truefoundry/trueforge-core/dist/agent-session/builtinsFromSpec.mjs'),
+    import('../scripts/judgment/constants.mjs'),
+  ]);
+  const spec = AgentSpecSchema.parse({
+    model: { name: 'anthropic/claude-haiku-4-5' },
+    config: expectedConfig,
+  });
+  const effectiveTools = builtinsFromSpec({
+    spec,
+    definition: {},
+    isChild: false,
+    sandboxAvailable: false,
+    tracing: {},
+    logger,
+  }).flatMap(capability => capability.systemToolSets ?? []).flatMap(toolSet => toolSet.getTools().map(tool => ({
+    type: 'truefoundry-system',
+    mcp_server_id: toolSet.id,
+    mcp_server_name: toolSet.name,
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.inputSchema,
+    is_approval_required: false,
+  })));
+
+  assert.deepEqual(constants.JUDGMENT_SESSION_CONFIG, expectedConfig);
+  assert.deepEqual(constants.RUNTIME_TOOL_SURFACE, effectiveTools);
+  assert.deepEqual(effectiveTools.map(tool => tool.name), ['get_current_datetime']);
+});
+
+test('V5-T2 installed version or source mismatch blocks before session creation', async () => {
+  const verified = assertJudgmentRuntimeInstallation();
+  assert.equal(verified.status, 'VERIFIED_BEFORE_TURN');
+  assert.throws(() => assertJudgmentRuntimeInstallation({
+    readBytes(path) {
+      const bytes = readFileSync(path);
+      return path.endsWith('/trueforge/dist/main.js')
+        ? Buffer.concat([bytes, Buffer.from('\nchanged')])
+        : bytes;
+    },
+  }), /JUDGMENT_RUNTIME_SOURCE_MISMATCH/);
+
+  let sessions = 0;
+  await assert.rejects(runJudgmentModel({
+    prompt: 'bounded prompt',
+    instructions: SYSTEM_INSTRUCTIONS,
+    runtimeGate() { throw new TypeError('JUDGMENT_RUNTIME_SOURCE_MISMATCH'); },
+    client: {
+      async createJudgmentSession() { sessions += 1; return 'must-not-exist'; },
+    },
+  }), /JUDGMENT_RUNTIME_SOURCE_MISMATCH/);
+  assert.equal(sessions, 0);
+});
+
+test('V5-T5 final JSON without persisted execution evidence writes no artifact', async () => {
+  const s = findingState();
+  const runsRoot = join(mkdtempSync(join(tmpdir(), 'judgment-no-events-')), 'runs');
+  let verifierCalled = false;
+  await assert.rejects(executeJudgmentLoop({
+    corpusRoot: s.f.root,
+    manifestBytes: s.f.manifestBytes,
+    priorBytes: s.f.priorBytes,
+    runsRoot,
+    runModel: async () => ({ content: response(), usage: null }),
+    verifyCandidate: async () => { verifierCalled = true; },
+  }), /judgment runtime preflight evidence invalid/);
+  assert.equal(verifierCalled, false);
+  assert.equal(existsSync(runsRoot), false);
+});
+
+test('V5-T6 unexpected judgment tool call fails closed', () => {
+  const events = judgmentEvents({ withClock: true });
+  const call = events.find(event => Array.isArray(event.tool_calls)).tool_calls[0];
+  call.function.name = 'exec';
+  call.tool_info.name = 'exec';
+  const evidence = reduceJudgmentExecution({
+    events,
+    turnStatus: 'done',
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+  });
+  assert.equal(evidence.status, 'NOT_ESTABLISHED');
+  assert.ok(evidence.failure_reasons.includes('JUDGMENT_TOOL_CALL_SHAPE_INVALID'));
+});
+
+test('V5-T7 zero clock calls is admissible and records availability separately from exercise', () => {
+  const events = judgmentEvents();
+  const evidence = reduceJudgmentExecution({
+    events,
+    turnStatus: 'done',
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+  });
+  assert.equal(evidence.status, 'ESTABLISHED');
+  assert.equal(evidence.availability.available_tool_count, 1);
+  assert.equal(evidence.availability.runtime_tool_surface_sha256, RUNTIME_TOOL_SURFACE_SHA256);
+  assert.equal(evidence.exercise.tool_call_count, 0);
+  assert.equal(evidence.exercise.tool_response_count, 0);
+  assert.equal(evidence.exercise.call, null);
+});
+
+test('V6-T8 exactly one persisted empty-argument clock call and response is admissible', () => {
+  const events = judgmentEvents({ withClock: true });
+  const evidence = reduceJudgmentExecution({
+    events,
+    turnStatus: 'done',
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+  });
+  assert.equal(evidence.status, 'ESTABLISHED');
+  assert.equal(evidence.exercise.tool_call_count, 1);
+  assert.equal(evidence.exercise.tool_response_count, 1);
+  assert.deepEqual(evidence.exercise.call.tool_info, {
+    type: 'truefoundry-system',
+    name: 'get_current_datetime',
+  });
+  assert.equal(evidence.exercise.call.arguments_empty, true);
+  assert.match(evidence.exercise.response_content_sha256, /^[0-9a-f]{64}$/);
+});
+
+test('V6-T9 duplicate, malformed, mismatched, sandbox, and question events all block', () => {
+  const duplicate = judgmentEvents({ withClock: true });
+  const duplicateMessage = duplicate.find(event => Array.isArray(event.tool_calls));
+  duplicateMessage.tool_calls.push(structuredClone(duplicateMessage.tool_calls[0]));
+
+  const malformed = judgmentEvents({ withClock: true });
+  malformed.find(event => Array.isArray(event.tool_calls)).tool_calls[0].tool_info.mcp_server_id =
+    'current-datetime';
+
+  const mismatched = judgmentEvents({ withClock: true });
+  mismatched.find(event => event.type === 'tool.response').tool_call_id = 'different-call';
+
+  const missingResponse = judgmentEvents({ withClock: true })
+    .filter(event => event.type !== 'tool.response');
+  const sandbox = judgmentEvents({ extraEvents: [{ type: 'sandbox.created', sandbox_id: sandboxId }] });
+  const question = judgmentEvents({ extraEvents: [{ type: 'ask_user_question.created', id: 'question-1' }] });
+  const malformedEvent = judgmentEvents({ extraEvents: [null] });
+
+  for (const events of [duplicate, malformed, mismatched, missingResponse, sandbox, question, malformedEvent]) {
+    const evidence = reduceJudgmentExecution({ events, turnStatus: 'done' });
+    assert.equal(evidence.status, 'NOT_ESTABLISHED');
+    assert.ok(evidence.failure_reasons.length > 0);
+  }
+});
+
+test('V5-T10 caller descriptions and effective runtime surface remain distinct nonempty hashes', () => {
+  assert.equal(toolsSha256(), CALLER_TOOL_DESCRIPTIONS_SHA256);
+  assert.equal(runtimeToolSurfaceSha256(), RUNTIME_TOOL_SURFACE_SHA256);
+  assert.notEqual(CALLER_TOOL_DESCRIPTIONS_SHA256, RUNTIME_TOOL_SURFACE_SHA256);
+  assert.notEqual(RUNTIME_TOOL_SURFACE_SHA256, sha256(canonicalJsonBytes([])));
+});
+
+test('V5-T12 consumed Run 001 prior cannot govern the successor execution path', () => {
+  const predecessor = readFileSync('docs/contracts/PRIOR_KNOWLEDGE.json');
+  assert.throws(() => validatePriorKnowledge(predecessor, {
+    instructions_sha256: instructionSha256(),
+    caller_tool_descriptions_sha256: CALLER_TOOL_DESCRIPTIONS_SHA256,
+    runtime_tool_surface_sha256: RUNTIME_TOOL_SURFACE_SHA256,
+    runtime_tool_surface_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
+  }), /consumed predecessor prior/);
+});
+
+test('V9-F3 successor prior rejects one reworded known condition', () => {
+  const successor = JSON.parse(readFileSync('docs/contracts/PRIOR_KNOWLEDGE_RUN_003.json'));
+  successor.known_conditions[0].description += ' Reworded after the predecessor was consumed.';
+  assert.throws(
+    () => validatePriorKnowledge(canonicalJsonBytes(successor)),
+    /known conditions digest mismatch/,
+  );
+});
+
+test('Run 004 has a separately frozen prior while Run 003 custody remains exact', () => {
+  const run3PriorBytes = readFileSync('docs/contracts/PRIOR_KNOWLEDGE_RUN_003.json');
+  const run4PriorBytes = readFileSync('docs/contracts/PRIOR_KNOWLEDGE_RUN_004.json');
+  assert.equal(
+    sha256(run3PriorBytes),
+    '04b4c700bdae79b6a550d20618eae79aa525c5335a273193be9616987fff93f3',
+  );
+  assert.equal(
+    sha256(run4PriorBytes),
+    '93820ea5a67e732aa55e896cd838200c3590af1e98368fd87e85dfd66da1cf1e',
+  );
+  assert.deepEqual(canonicalJsonBytes(JSON.parse(run4PriorBytes)), run4PriorBytes);
+
+  const expected = {
+    instructions_sha256: instructionSha256(),
+    caller_tool_descriptions_sha256: CALLER_TOOL_DESCRIPTIONS_SHA256,
+    runtime_tool_surface_sha256: RUNTIME_TOOL_SURFACE_SHA256,
+    runtime_tool_surface_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
+    corpus_manifest_sha256: '914b22f52a9d7d8ce382458caa3915cc47841ccfd153f72f314107c55be08fb6',
+  };
+  const run4 = validatePriorKnowledge(run4PriorBytes, expected);
+  assert.deepEqual([...run4.knownIds], ['K1', 'K2', 'K3', 'K4', 'K5', 'K6']);
+  assert.equal(run4.prior.run_identity, 'Run 004');
+  assert.equal(run4.prior.status, 'FROZEN_BEFORE_RUN_004');
+  assert.equal(run4.prior.run_003_compliance, 'NON_COMPLIANT_V7_1_6_PERMANENT');
+  assert.throws(
+    () => validatePriorKnowledge(run3PriorBytes, expected),
+    /instructions_sha256 mismatch/,
+  );
+});
+
 test('J01 corpus manifest rejects empty, unsorted, duplicate, oversized, and mismatched inputs', () => {
   const f = fixture();
   assert.equal(loadCorpus({ corpusRoot: f.root, manifestBytes: f.manifestBytes }).files.length, 1);
@@ -255,19 +524,24 @@ test('J01 corpus manifest rejects empty, unsorted, duplicate, oversized, and mis
 test('J02 unresolved or mismatched prior hashes block before a model call', () => {
   const f = fixture();
   const pending = structuredClone(f.prior);
-  pending.what_the_agent_is_given.tools_sha256 = 'PENDING';
+  pending.what_the_agent_is_given.runtime_tool_surface_sha256 = 'PENDING';
   assert.throws(() => validatePriorKnowledge(canonicalJsonBytes(pending)), /unresolved/);
-  assert.throws(() => validatePriorKnowledge(f.priorBytes, { tools_sha256: '0'.repeat(64) }), /mismatch/);
+  assert.throws(() => validatePriorKnowledge(f.priorBytes, {
+    runtime_tool_surface_sha256: '0'.repeat(64),
+    runtime_tool_surface_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
+  }), /mismatch/);
 });
 
-test('J03 prompt contains every corpus file and no model tools', () => {
+test('J03 prompt contains every corpus file and discloses only the bounded stock clock tool', () => {
   const s = state();
   const prompt = buildAgentPrompt(s.corpus, s.priorState.prior);
   assert.match(prompt, /src\/check\.mjs/);
   assert.match(prompt, /report\.credentials/);
   assert.match(prompt, /bug tracking label/);
-  assert.match(prompt, /known defect class/i);
+  assert.match(prompt, /signal nobody consumes/i);
   assert.deepEqual(TOOL_DESCRIPTIONS, []);
+  assert.match(SYSTEM_INSTRUCTIONS, /one clock tool/i);
+  assert.match(SYSTEM_INSTRUCTIONS, /no other tool/i);
   assert.ok(AGENT_CAPABILITIES.denied.includes('apply_change'));
   assert.doesNotMatch(SYSTEM_INSTRUCTIONS, /READY_LOCAL/);
 });
@@ -389,7 +663,7 @@ test('J08 proposal schema cannot represent approval or application', () => {
     runsRoot: runs,
     runId: 'judgment-00000000000000000000000000000000',
     now: () => '2026-08-27T15:00:00.000Z',
-    runModel: async () => ({ content: response(), usage: { input_tokens: 100, output_tokens: 20 } }),
+    runModel: async () => successfulJudgmentModel(),
     verifyCandidate: async () => verification,
   }).then(result => {
     assert.equal(result.status, 'BREAKER_PENDING');
@@ -412,7 +686,9 @@ test('J09 empty finding set is NO_FINDINGS, not CLEAN, and writes no artifact', 
     priorBytes: s.f.priorBytes,
     repoRoot,
     runsRoot: join(repoRoot, 'docs/demo/runs'),
-    runModel: async () => ({ content: canonicalJson({ schema: 'judgment_response/v1', findings: [] }), usage: null }),
+    runModel: async () => successfulJudgmentModel(
+      canonicalJson({ schema: 'judgment_response/v1', findings: [] }),
+    ),
     verifyCandidate: async () => { verifierCalled = true; },
   });
   assert.equal(outcome.status, 'NO_FINDINGS');
@@ -433,7 +709,7 @@ test('J10 recomputation rejects model assertion and re-derives bytes, count, lin
     repoRoot,
     runsRoot: runs,
     runId: 'judgment-11111111111111111111111111111111',
-    runModel: async () => ({ content: response(), usage: null }),
+    runModel: async () => successfulJudgmentModel(),
     verifyCandidate: async ({ prepared }) => successVerification(prepared),
   });
   const artifactBytes = readFileSync(join(result.run_dir, 'judgment_run_artifact.json'));
@@ -469,7 +745,7 @@ test('J10b external run roots remain recomputable after relocation without shell
     priorBytes: s.f.priorBytes,
     runsRoot: runs,
     runId: 'judgment-22222222222222222222222222222222',
-    runModel: async () => ({ content: response(), usage: null }),
+    runModel: async () => successfulJudgmentModel(),
     verifyCandidate: async ({ prepared }) => successVerification(prepared),
   });
   const publishedRoot = mkdtempSync(join(tmpdir(), 'judgment published '));
@@ -493,27 +769,106 @@ test('J10b external run roots remain recomputable after relocation without shell
 test('J11 controlling contract, proposal schema, and capability manifest hashes are exact', () => {
   const root = dirname(dirname(new URL(import.meta.url).pathname));
   const artifacts = [
-    ['docs/contracts/HACKATHON_JUDGMENT_LOOP_CONTRACT_V4_2026-08-27.md', JUDGMENT_CONTRACT_SHA256],
+    ['docs/contracts/HACKATHON_JUDGMENT_LOOP_CONTRACT_V9_ADDENDUM_2026-08-28.md', JUDGMENT_CONTRACT_SHA256],
     ['docs/contracts/change-proposal-v2.schema.json', CHANGE_PROPOSAL_SCHEMA_SHA256],
-    ['docs/contracts/agent-capability-manifest-v1.json', AGENT_CAPABILITY_MANIFEST_SHA256],
+    ['docs/contracts/agent-capability-manifest-v2.json', AGENT_CAPABILITY_MANIFEST_SHA256],
   ];
   for (const [path, expected] of artifacts) {
     assert.equal(sha256(readFileSync(join(root, path))), expected);
   }
 });
 
-test('J12 judgment session requests no tools and disables its sandbox', async () => {
+test('J12 transmits the exact minimized config and closed JSON schema request', async () => {
   let observed;
   const client = new JudgmentTrueForgeClient();
   client.request = async (method, path, body) => {
     observed = { method, path, body };
-    return { data: { id: 'session-1' } };
+    return {
+      data: {
+        id: 'session-1',
+        agent: {
+          spec: {
+            config: JUDGMENT_SESSION_CONFIG,
+            response_format: JUDGMENT_RESPONSE_FORMAT,
+          },
+        },
+      },
+    };
   };
   assert.equal(await client.createJudgmentSession(SYSTEM_INSTRUCTIONS), 'session-1');
   assert.equal(observed.method, 'POST');
   assert.equal(observed.path, '/api/v1/sessions');
-  assert.equal(observed.body.agent.spec.config.sandbox.enabled, false);
+  assert.deepEqual(observed.body.agent.spec.config, JUDGMENT_SESSION_CONFIG);
+  assert.deepEqual(observed.body.agent.spec.response_format, JUDGMENT_RESPONSE_FORMAT);
   assert.equal(Object.hasOwn(observed.body.agent.spec, 'tools'), false);
+  const { AgentSpecSchema } = await import(
+    '../node_modules/@truefoundry/trueforge-core/dist/agent-session/schemas/agentSpec.mjs'
+  );
+  assert.deepEqual(
+    AgentSpecSchema.parse(observed.body.agent.spec).response_format,
+    JUDGMENT_RESPONSE_FORMAT,
+  );
+});
+
+test('V9-F4 returned response format mismatch cancels before the model prompt', async () => {
+  const requests = [];
+  const client = new JudgmentTrueForgeClient();
+  client.request = async (method, path, body) => {
+    requests.push({ method, path, body });
+    if (path === '/api/v1/sessions') {
+      return {
+        data: {
+          id: 'session-response-format-mismatch',
+          agent: {
+            spec: {
+              config: JUDGMENT_SESSION_CONFIG,
+              response_format: { type: 'json_object' },
+            },
+          },
+        },
+      };
+    }
+    return null;
+  };
+  await assert.rejects(
+    client.createJudgmentSession(SYSTEM_INSTRUCTIONS),
+    error => error?.code === 'JUDGMENT_RESPONSE_FORMAT_MISMATCH' && error?.status === 422,
+  );
+  assert.deepEqual(requests.map(request => request.path), [
+    '/api/v1/sessions',
+    '/api/v1/sessions/session-response-format-mismatch/cancel',
+  ]);
+});
+
+test('V5-T4 returned session config with one enabled field cancels before the model prompt', async () => {
+  const requests = [];
+  const client = new JudgmentTrueForgeClient();
+  client.request = async (method, path, body) => {
+    requests.push({ method, path, body });
+    if (path === '/api/v1/sessions') {
+      return {
+        data: {
+          id: 'session-config-mismatch',
+          agent: { spec: {
+            config: {
+              ...structuredClone(JUDGMENT_SESSION_CONFIG),
+              generative_ui: { enabled: true },
+            },
+            response_format: JUDGMENT_RESPONSE_FORMAT,
+          } },
+        },
+      };
+    }
+    return null;
+  };
+  await assert.rejects(
+    client.createJudgmentSession(SYSTEM_INSTRUCTIONS),
+    error => error?.code === 'JUDGMENT_SESSION_CONFIG_MISMATCH' && error?.status === 422,
+  );
+  assert.deepEqual(requests.map(request => request.path), [
+    '/api/v1/sessions',
+    '/api/v1/sessions/session-config-mismatch/cancel',
+  ]);
 });
 
 test('T21 fixed verifier bytes do not vary with corpus, finding, payload, or manifest', () => {

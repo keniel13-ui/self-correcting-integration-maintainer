@@ -12,7 +12,9 @@ import {
   MAX_FILE_BYTES,
   MAX_FILES,
   MAX_REPLACEMENT_BYTES,
+  PREDECESSOR_KNOWN_CONDITIONS_SHA256,
   PROMPT_FRAME,
+  RUNTIME_TOOL_SURFACE,
   SYSTEM_INSTRUCTIONS,
   TOOL_DESCRIPTIONS,
 } from './constants.mjs';
@@ -27,6 +29,14 @@ const RAW_FINDING_KEYS = [
   'known_condition_id', 'confidence_basis', 'not_established', 'repair',
 ];
 const REPAIR_KEYS = ['before_exact', 'after_exact'];
+const PRIOR_V1_HASH_KEYS = ['instructions_sha256', 'tools_sha256', 'corpus_manifest_sha256'];
+const PRIOR_V2_HASH_KEYS = [
+  'instructions_sha256',
+  'caller_tool_descriptions_sha256',
+  'runtime_tool_surface_sha256',
+  'runtime_tool_surface_manifest_sha256',
+  'corpus_manifest_sha256',
+];
 
 function nonempty(value, label, maximum = 16_384) {
   if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > maximum) {
@@ -95,12 +105,28 @@ export function loadCorpus({ corpusRoot, manifestBytes }) {
 
 export function validatePriorKnowledge(bytes, expected = {}) {
   const prior = parseStrictJson(bytes.toString('utf8'));
-  if (prior?.schema !== 'prior_knowledge/v1' || !Array.isArray(prior.known_conditions)) {
+  if (!['prior_knowledge/v1', 'prior_knowledge/v2'].includes(prior?.schema) ||
+      !Array.isArray(prior.known_conditions)) {
     throw new TypeError('prior knowledge schema invalid');
   }
   const given = prior.what_the_agent_is_given;
   if (!given || typeof given !== 'object') throw new TypeError('prior knowledge inputs absent');
-  for (const field of ['instructions_sha256', 'tools_sha256', 'corpus_manifest_sha256']) {
+  const successorExpected = Object.hasOwn(expected, 'runtime_tool_surface_manifest_sha256');
+  if (successorExpected && prior.schema !== 'prior_knowledge/v2') {
+    throw new TypeError('consumed predecessor prior cannot govern successor run');
+  }
+  const hashFields = prior.schema === 'prior_knowledge/v2' ? PRIOR_V2_HASH_KEYS : PRIOR_V1_HASH_KEYS;
+  if (prior.schema === 'prior_knowledge/v2') {
+    assertClosedObject(given, PRIOR_V2_HASH_KEYS, 'prior knowledge successor inputs');
+    if (given.caller_tool_descriptions_sha256 === given.runtime_tool_surface_sha256) {
+      throw new TypeError('caller and runtime tool surfaces must remain distinct');
+    }
+    if (sha256(canonicalJsonBytes(prior.known_conditions)) !==
+        PREDECESSOR_KNOWN_CONDITIONS_SHA256) {
+      throw new TypeError('known conditions digest mismatch');
+    }
+  }
+  for (const field of hashFields) {
     if (!HEX.test(given[field] ?? '')) throw new TypeError(`prior knowledge ${field} unresolved`);
     if (expected[field] && given[field] !== expected[field]) throw new TypeError(`${field} mismatch`);
   }
@@ -125,6 +151,10 @@ export function instructionSha256() {
 
 export function toolsSha256() {
   return sha256(canonicalJsonBytes(TOOL_DESCRIPTIONS));
+}
+
+export function runtimeToolSurfaceSha256() {
+  return sha256(canonicalJsonBytes(RUNTIME_TOOL_SURFACE));
 }
 
 export function buildAgentPrompt(corpus, prior) {
