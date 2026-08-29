@@ -93,6 +93,15 @@ An earlier substrate probe returned `exitCode: 0` and `323\n`; that proves only 
 TrueForge-to-Daytona execution substrate worked for that probe. It is not candidate-verification
 evidence and is not presented as such.
 
+The historical Link 4 evidence chain is public and hash-checkable:
+[`BRIEF_KAIROS_2026-08-26.md`](freezes/BRIEF_KAIROS_2026-08-26.md) (SHA-256
+`7f2784033076c8e4b269a263f43f057514b4e2fbde422e0b6b35dbff1dc9e1ed`) authorized the
+[`LINK4_RECEIPT`](freezes/HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md) (SHA-256
+`f22fd4384cf266851fba1067492832fc53524ec92ee5d3a32653f49a0a3803d0`), which the
+[`LINK4_STOCK_DELTA`](freezes/HACKATHON_SUBSTRATE_LINK4_STOCK_DELTA_KAIROS_2026-08-26.md)
+supersedes only on reproducibility. The later cleanup metadata is explicitly a maker report: its
+exact response body was never retained and no independently checkable zero-sandbox claim is made.
+
 ## What broke along the way
 
 The project repeatedly caught its own contracts and harness making stronger claims than the runtime

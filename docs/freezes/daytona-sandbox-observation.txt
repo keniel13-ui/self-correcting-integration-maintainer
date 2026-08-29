@@ -5,5 +5,5 @@
 observed_at_utc: 2026-08-27T17:31:32Z
 endpoint: GET https://app.daytona.io/api/sandbox
 http_status: 200
-sandbox_count: 0
-response_body_sha256: d47160c01f441269d023ff1a0e5126668c511828d22da948a5f6f4ed033367a5
+maker_reported_sandbox_count: 0
+maker_reported_response_body_sha256: d47160c01f441269d023ff1a0e5126668c511828d22da948a5f6f4ed033367a5
