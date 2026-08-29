@@ -7,7 +7,9 @@ import { sha256 } from '../pr2/inputs.mjs';
 import {
   AGENT_CAPABILITIES,
   AGENT_CAPABILITY_MANIFEST_SHA256,
+  CALLER_TOOL_DESCRIPTIONS_SHA256,
   JUDGMENT_CONTRACT_SHA256,
+  RUNTIME_TOOL_SURFACE_SHA256,
   SYSTEM_INSTRUCTIONS,
 } from './constants.mjs';
 import {
@@ -15,6 +17,7 @@ import {
   coverageFromCorpus,
   instructionSha256,
   loadCorpus,
+  runtimeToolSurfaceSha256,
   toolsSha256,
   validateAgentResponse,
   validatePriorKnowledge,
@@ -29,6 +32,7 @@ const RECOMPUTE_SOURCE_PATHS = Object.freeze([
   'scripts/judgment/recompute.mjs',
   'scripts/judgment/core.mjs',
   'scripts/judgment/constants.mjs',
+  'scripts/judgment/runtime-surface.mjs',
   'scripts/pr2/canonical.mjs',
   'scripts/pr2/inputs.mjs',
   'scripts/pr2/constants.mjs',
@@ -52,6 +56,23 @@ function newRunId() {
   return `judgment-${randomBytes(16).toString('hex')}`;
 }
 
+function assertModelExecutionEvidence(model) {
+  if (model?.runtimePreflight?.status !== 'VERIFIED_BEFORE_TURN' ||
+      model.runtimePreflight.caller_tool_descriptions_sha256 !== CALLER_TOOL_DESCRIPTIONS_SHA256 ||
+      model.runtimePreflight.runtime_tool_surface_sha256 !== RUNTIME_TOOL_SURFACE_SHA256 ||
+      model.runtimePreflight.runtime_tool_surface_manifest_sha256 !== AGENT_CAPABILITY_MANIFEST_SHA256) {
+    throw new TypeError('judgment runtime preflight evidence invalid');
+  }
+  if (!Array.isArray(model?.persistedEvents) || model?.executionEvidence?.status !== 'ESTABLISHED') {
+    throw new TypeError('judgment execution evidence absent');
+  }
+  const persistedEventsSha256 = sha256(canonicalJsonBytes(model.persistedEvents));
+  if (model.executionEvidence.persisted_events_sha256 !== persistedEventsSha256 ||
+      model.executionEvidence.availability?.runtime_tool_surface_sha256 !== RUNTIME_TOOL_SURFACE_SHA256) {
+    throw new TypeError('judgment execution evidence mismatch');
+  }
+}
+
 export async function executeJudgmentLoop({
   corpusRoot,
   manifestBytes,
@@ -67,12 +88,15 @@ export async function executeJudgmentLoop({
   const corpus = loadCorpus({ corpusRoot, manifestBytes });
   const expectedHashes = {
     instructions_sha256: instructionSha256(),
-    tools_sha256: toolsSha256(),
+    caller_tool_descriptions_sha256: toolsSha256(),
+    runtime_tool_surface_sha256: runtimeToolSurfaceSha256(),
+    runtime_tool_surface_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
     corpus_manifest_sha256: corpus.manifestSha256,
   };
   const priorState = validatePriorKnowledge(priorBytes, expectedHashes);
   const prompt = buildAgentPrompt(corpus, priorState.prior);
   const model = await runModel({ prompt, instructions: SYSTEM_INSTRUCTIONS });
+  assertModelExecutionEvidence(model);
   const findings = validateAgentResponse(model.content, {
     corpus,
     priorSha256: priorState.priorSha256,
@@ -103,15 +127,22 @@ export async function executeJudgmentLoop({
   const proposalBytes = canonicalJsonBytes(proposal);
   const verificationBytes = canonicalJsonBytes(verification);
   const rawModelBytes = Buffer.from(model.content, 'utf8');
+  const runtimePreflightBytes = canonicalJsonBytes(model.runtimePreflight);
+  const judgmentEventsBytes = canonicalJsonBytes(model.persistedEvents);
+  const judgmentExecutionBytes = canonicalJsonBytes(model.executionEvidence);
   const artifact = {
-    schema: 'judgment_run_artifact/v1',
+    schema: 'judgment_run_artifact/v2',
     run_id: runId,
     observed_at_utc: now(),
     judgment_contract_sha256: JUDGMENT_CONTRACT_SHA256,
     prior_knowledge_sha256: priorState.priorSha256,
     instructions_sha256: expectedHashes.instructions_sha256,
-    tools_sha256: expectedHashes.tools_sha256,
+    caller_tool_descriptions_sha256: expectedHashes.caller_tool_descriptions_sha256,
+    runtime_tool_surface_sha256: expectedHashes.runtime_tool_surface_sha256,
     agent_capability_manifest_sha256: AGENT_CAPABILITY_MANIFEST_SHA256,
+    judgment_runtime_preflight_sha256: sha256(runtimePreflightBytes),
+    judgment_persisted_events_sha256: sha256(judgmentEventsBytes),
+    judgment_execution_evidence_sha256: sha256(judgmentExecutionBytes),
     corpus_manifest_sha256: corpus.manifestSha256,
     raw_model_output_sha256: sha256(rawModelBytes),
     candidate_verification_sha256: sha256(verificationBytes),
@@ -150,6 +181,9 @@ export async function executeJudgmentLoop({
   writeFileSync(join(runDir, 'corpus_manifest.json'), manifestBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'PRIOR_KNOWLEDGE.json'), priorBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'raw_model_response.json'), rawModelBytes, { flag: 'wx' });
+  writeFileSync(join(runDir, 'judgment_runtime_preflight.json'), runtimePreflightBytes, { flag: 'wx' });
+  writeFileSync(join(runDir, 'judgment_persisted_events.json'), judgmentEventsBytes, { flag: 'wx' });
+  writeFileSync(join(runDir, 'judgment_execution_evidence.json'), judgmentExecutionBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'candidate_verification_evidence.json'), verificationBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'change_proposal.json'), proposalBytes, { flag: 'wx' });
   writeFileSync(join(runDir, 'judgment_run_artifact.json'), canonicalJsonBytes(artifact), { flag: 'wx' });
