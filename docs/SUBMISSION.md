@@ -78,7 +78,10 @@ classified it `CONFIRMS_KNOWN` rather than claiming a discovery.
 Run 004 established the following rungs:
 
 - provider-enforced structured output produced directly parseable JSON;
-- the agent returned one bounded repair and classified its finding `CONFIRMS_KNOWN / K1`;
+- the agent returned one bounded repair in `forms.mjs` and self-reported it `CONFIRMS_KNOWN / K1`.
+  That classification is **not established** — `classification_correct` is recorded `false` and an
+  independent read found the K1 match semantically wrong. The full raw response is preserved in
+  [`docs/freezes/RUN_004_RECEIPT.json`](freezes/RUN_004_RECEIPT.json);
 - the harness prepared and transported three hash-bound artifacts;
 - TrueForge created a Daytona sandbox and persisted one matching `exec` call and response;
 - the sandbox executed the command and returned `exitCode: 127` with
@@ -161,8 +164,8 @@ actual evidence rungs rather than collapsed into one green label.
 
 *[Screen: the Run 004 model result and persisted events]*
 
-> It found that missing lab results become an empty list and the `labs.length > 0` guard evaluates
-> false. The release decision reads absence as a pass.
+> It found that when no file passes the filter the process exits 2, while a non-empty result is
+> written to stdout and exits 0 — so a caller reading only the exit code cannot tell what happened.
 >
 > Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It found a real condition and told me it
 > was not new, against knowledge frozen before the run.
