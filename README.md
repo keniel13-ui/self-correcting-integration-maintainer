@@ -1,30 +1,44 @@
 # Self-Correcting Integration Maintainer
 
-> **Current state:** infrastructure slice only. No self-improvement, safety, or contest-result claim has been established yet.
+> **Current state:** the judgment loop is implemented and offline-tested. Live Run 004 produced one
+> bounded repair, transported three hash-bound artifacts into Daytona, and executed the verifier
+> command. Candidate verification is **not established**: the sandbox returned `exitCode: 127`
+> because its Python 3.13 image had no Node runtime. No target was mutated, no successful judgment
+> run is claimed, and the independent breaker verdict remains pending.
 
-A TrueForge agent that keeps one integration working when an upstream contract changes unexpectedly. It may revise its understanding, hypotheses, strategy, skills, and candidate code when evidence demands it. It may not revise the evidence required to authorize the consequences of those revisions.
+A TrueForge agent that inspects an unfamiliar integration, classifies each finding relative to
+frozen prior knowledge, and prepares a bounded repair without acquiring authority to apply it. The
+harness enforces classification-reference consistency; it does not independently prove that the
+model's novelty label is semantically correct. A change proposal can exist only after measured
+candidate execution reports `VERIFIED_IN_DAYTONA` with exit code `0`; even then it remains
+`AWAITING_HUMAN_APPROVAL` and exposes no apply capability to the agent.
 
 ## The job
 
-The final system will:
+The contest build:
 
-1. detect a structural mismatch between an expected and observed integration contract;
-2. investigate competing explanations using tools, a sandbox, and a challenger subagent;
-3. produce and verify a candidate repair;
-4. stop before the consequential state change;
-5. bind human authorization to the exact proposed transition;
-6. preserve only evidence-supported learning for the next incident.
+1. presents a sealed corpus and a hash-bound prior-knowledge file committed before the run;
+2. requires every finding to classify itself as `NEW`, `CONFIRMS_KNOWN`, or `CHANGES_KNOWN`;
+3. checks the response shape, novelty-reference consistency, quoted bytes, stated limits, and
+   repair bounds;
+4. transports one candidate repair as three hash-bound artifacts into a Daytona sandbox;
+5. creates a proposal only after verified execution with exit code `0`;
+6. leaves every proposal waiting for human approval and never mounts the target repository in
+   either model surface.
 
 The contest build narrows the task surface, not the cognitive depth.
 
 ## Why TrueForge is central
 
-- the agent loop and persistent session run in TrueForge;
-- external systems are reached through MCP;
-- generated diagnostics and repair candidates execute in Daytona;
-- the challenger uses TrueForge subagents;
-- the consequential action pauses at TrueForge's human checkpoint;
-- the demo exposes the harness state rather than hiding it behind a model wrapper.
+- the judgment and candidate-relay sessions run in TrueForge;
+- the harness persists model and tool events, which the project retrieves and audits after each turn;
+- the judgment session uses a closed `json_schema` response format and fails closed unless TrueForge
+  returns byte-equivalent session configuration;
+- the relay transports three hash-bound artifacts and invokes TrueForge's Daytona sandbox execution;
+- optional subagents, generative UI, user questions, file downloads, and the judgment-session sandbox
+  are explicitly disabled;
+- authority is measured by the project-level proposal invariant: without `VERIFIED_IN_DAYTONA` and
+  exit code `0`, no proposal exists; with them, it still remains `AWAITING_HUMAN_APPROVAL`.
 
 ## Setup
 
@@ -152,4 +166,3 @@ Green local tests are maker evidence. They do not prove an intelligent recovery,
 ## License
 
 MIT
-
