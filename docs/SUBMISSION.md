@@ -79,8 +79,10 @@ Run 004 established the following rungs:
 
 - provider-enforced structured output produced directly parseable JSON;
 - the agent returned one bounded repair in `forms.mjs` and self-reported it `CONFIRMS_KNOWN / K1`.
-  That classification is **not established** — `classification_correct` is recorded `false` and an
-  independent read found the K1 match semantically wrong. The full raw response is preserved in
+  That classification is **not established**. The runner hardcodes `classification_correct: false`
+  *if* it writes an artifact; this run threw first and wrote none. The receipt instead lists "the
+  semantic correctness of the CONFIRMS_KNOWN / K1 classification" as not established, and a human
+  read found the K1 match wrong. The full raw response is preserved in
   [`docs/freezes/RUN_004_RECEIPT.json`](freezes/RUN_004_RECEIPT.json);
 - the harness prepared and transported three hash-bound artifacts;
 - TrueForge created a Daytona sandbox and persisted one matching `exec` call and response;
@@ -165,7 +167,9 @@ actual evidence rungs rather than collapsed into one green label.
 *[Screen: the Run 004 model result and persisted events]*
 
 > It found that when no file passes the filter the process exits 2, while a non-empty result is
-> written to stdout and exits 0 — so a caller reading only the exit code cannot tell what happened.
+> written to stdout and exits 0. The agent argued a caller cannot distinguish those cases from the
+> exit code; it can, and that consequence does not hold. The bytes it quoted are exact and the patch
+> is bounded, but the interpretation and the K1 class match both fail inspection.
 >
 > Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It found a real condition and told me it
 > was not new, against knowledge frozen before the run.
