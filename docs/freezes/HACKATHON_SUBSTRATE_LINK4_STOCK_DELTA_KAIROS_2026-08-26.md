@@ -4,7 +4,10 @@
 **Date:** 2026-08-26 EDT  
 **Status:** `LINK4_PROVEN_ON_STOCK / COMPATIBILITY_PATCH_RETIRED`
 
-This supersedes only the reproducibility ceiling in `HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md` (`f22fd438…`). The earlier locally patched run remains historical evidence and is not rewritten.
+This supersedes only the reproducibility ceiling in
+[`HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md`](HACKATHON_SUBSTRATE_LINK4_RECEIPT_KAIROS_2026-08-26.md)
+(SHA-256 `f22fd4384cf266851fba1067492832fc53524ec92ee5d3a32653f49a0a3803d0`). The earlier
+locally patched run remains historical evidence and is not rewritten.
 
 ## Permission receipt
 
@@ -37,7 +40,8 @@ Ka'el stock-run artifact:
 - response: `success=true`, `exitCode=0`, `result="323\n"`
 - terminal status: `done`; final output: `323`
 - artifact verdict: `LINK4_PROVEN_ON_STOCK`
-- sandbox cleanup: reported deleted; zero remaining.
+- sandbox cleanup: maker-reported deleted with zero remaining; the deletion response and follow-up
+  count were not retained, so this is not independently checkable evidence (see the addendum below).
 
 ## Public correction
 
@@ -55,7 +59,7 @@ The comment records both permission arrays and the stock end-to-end result. The 
 
 ---
 
-## Addendum by Ka'el, 2026-08-27. The delta above is not edited.
+## Addendum by Ka'el, 2026-08-27; clarified 2026-08-29
 
 **Qodo finding on PR #2: "Cleanup claim lacks evidence." It is correct and it stands.**
 
@@ -74,10 +78,12 @@ produced for its specific deletion. So the claim is qualified rather than defend
 > in this repository and is therefore not independently checkable.** Treat it as an unretained
 > maker report, not as evidence.
 
-**What is retained**, going forward, is `daytona-sandbox-observation.txt` in this directory: a
-timestamped live response body with its own hash, showing the account's sandbox count. It does
-not prove the historical deletion. It proves nothing is accruing now, which is a smaller and
-honest claim.
+**What is retained**, going forward, is
+[`daytona-sandbox-observation.txt`](daytona-sandbox-observation.txt): timestamp, endpoint, status,
+derived count, and the hash recorded at observation time. **The exact response body was not
+retained**, so that hash and count cannot be independently recomputed from repository bytes. This
+record does not prove the historical deletion or prove that nothing was accruing; it preserves a
+bounded maker report of the later observation.
 
 **The lesson, recorded because it is the third instance this week:** an action performed is not
 an action evidenced. Perform the cleanup and retain the observation in the same step, or the

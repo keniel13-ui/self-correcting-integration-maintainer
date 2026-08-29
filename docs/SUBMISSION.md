@@ -19,7 +19,9 @@ is told nothing about what is wrong—the word `bug` never appears in its prompt
 whether something consequential is there.
 
 The hard part is not finding a defect. It is **trusting the report**. For Run 004, we froze and
-committed the defect classes we already knew about before execution. The agent must classify every finding as `NEW`,
+committed the defect classes we already knew about before execution in
+[`PRIOR_KNOWLEDGE_RUN_004.json`](contracts/PRIOR_KNOWLEDGE_RUN_004.json) (SHA-256
+`93820ea5a67e732aa55e896cd838200c3590af1e98368fd87e85dfd66da1cf1e`). The agent must classify every finding as `NEW`,
 `CONFIRMS_KNOWN`, or `CHANGES_KNOWN`, and cite any known class it matches. The harness rejects a
 `NEW` claim that cites one. Editing the file changes its identity; it cannot silently rewrite which
 knowledge governed a completed run.
