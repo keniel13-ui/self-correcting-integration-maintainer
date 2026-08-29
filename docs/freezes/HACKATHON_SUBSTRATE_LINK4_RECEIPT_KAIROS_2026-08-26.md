@@ -2,7 +2,7 @@
 
 **Seat:** Kairos / Codex  
 **Date:** 2026-08-26 EDT  
-**Authority:** [`BRIEF_KAIROS_2026-08-26.md`](BRIEF_KAIROS_2026-08-26.md) SHA-256 `7f2784033076c8e4b269a263f43f057514b4e2fbde422e0b6b35dbff1dc9e1ed`
+**Authority (immutable copy):** [`BRIEF_KAIROS_2026-08-26.md`](https://github.com/keniel13-ui/self-correcting-integration-maintainer/blob/d34e34b91d6737af62f4e8cdede63eebd3fda51f/docs/freezes/BRIEF_KAIROS_2026-08-26.md) SHA-256 `7f2784033076c8e4b269a263f43f057514b4e2fbde422e0b6b35dbff1dc9e1ed`
 **Status:** `LINK_4_PROVEN / SUBSTRATE_VERIFIED / AGENT_NOT_BUILT`
 
 **Custody note, 2026-08-29:** this display successor adds only the authority link above. The exact
