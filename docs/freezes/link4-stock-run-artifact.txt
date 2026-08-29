@@ -1,0 +1,14 @@
+    session: 01m104fvgy5tme1tpdjmy5p0fg | sandbox enabled
+    turn: 01m104fvmb4jx1mhvdjepcks36.local | POST 200
+      ...3s
+    status: done
+    metrics: {"total_input_tokens":5303,"total_output_tokens":88,"total_tokens":5391,"total_cache_read_tokens":0,"total_cache_write_tokens":0}
+    events: ["turn.created","model.message","sandbox.created","tool.response","model.message","turn.done"]
+    SANDBOX CALL: exec | tool_info: {"type":"truefoundry-system","name":"exec"}
+      args: {"intent": "Execute a simple Python calculation", "command": "python3 -c \"print(17*19)\""}
+    SANDBOX EVENT: sandbox.created {"type":"sandbox.created","id":"01m104g007bnw43str87zt8t0z","created_at":"2026-08-26T22:54:15.559Z","sandbox_id":"v1:daytona:default.5e45da1b-a5aa-424f-be9d-559ad933dc1a","thread_id":null}
+    TOOL RESPONSE contains 323: {"success":true,"response":{"exitCode":0,"result":"323\n"}}
+  
+    final output: "323"
+    sandbox call seen: true | 323 returned: true
+    VERDICT: LINK4_PROVEN_ON_STOCK

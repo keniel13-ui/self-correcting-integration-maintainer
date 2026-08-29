@@ -1,0 +1,9 @@
+# Daytona sandbox observation metadata — corrected claim boundary 2026-08-29.
+# Retained because the stock link-4 delta claimed cleanup and the raw artifact carried none.
+# The exact response body was not retained. This is a maker report of derived metadata, not a
+# replayable response-body receipt; its count and body hash cannot be independently recomputed.
+observed_at_utc: 2026-08-27T17:31:32Z
+endpoint: GET https://app.daytona.io/api/sandbox
+http_status: 200
+maker_reported_sandbox_count: 0
+maker_reported_response_body_sha256: d47160c01f441269d023ff1a0e5126668c511828d22da948a5f6f4ed033367a5
