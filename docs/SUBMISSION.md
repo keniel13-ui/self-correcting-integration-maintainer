@@ -1,126 +1,171 @@
 # Self-Correcting Integration Maintainer
 
-**The Agent Harness Hackathon — project write-up**
+**The Agent Harness Hackathon — submission answers and demo narrative**
+
 Repository: https://github.com/keniel13-ui/self-correcting-integration-maintainer
+
+This write-up is bounded by live Run 004. It does not claim a successful run, a verified candidate,
+or `VERIFIED_IN_DAYTONA`.
 
 ---
 
-## What the agent does
+## What does your project do?
 
-It reads a codebase it was never briefed on, finds a condition **nobody pointed it at**, states
-why that condition matters, says honestly whether the condition is one we had already named,
-preserves evidence a stranger can recompute, and proposes a bounded repair **it is structurally
-incapable of applying.**
+Most code review catches what a rule already describes. The failures that actually ship are often
+the ones nobody wrote a rule for.
 
-The distinction that shaped everything: a scheduled job that runs is obeying. **An agent that
-notices the thing nobody wrote a rule for is judging.** A component that reports status does not
-satisfy this project no matter how green it is.
+This is a **Self-Correcting Integration Maintainer**: an agent that inspects code it has never seen,
+is told nothing about what is wrong—the word `bug` never appears in its prompt—and has to decide
+whether something consequential is there.
 
-## The hard problem, and how we made it checkable
+The hard part is not finding a defect. It is **trusting the report**. For Run 004, we froze and
+committed the defect classes we already knew about before execution. The agent must classify every finding as `NEW`,
+`CONFIRMS_KNOWN`, or `CHANGES_KNOWN`, and cite any known class it matches. The harness rejects a
+`NEW` claim that cites one. Editing the file changes its identity; it cannot silently rewrite which
+knowledge governed a completed run.
 
-If the contract says "detect condition X," then finding X is obedience, not judgment. If the
-contract says nothing, there is no contract.
+The agent found a real condition in never-published code. Then it reported that the condition was
+already known.
 
-So the contract **does not specify the finding.** It specifies what makes a finding admissible,
-and makes novelty falsifiable by freezing what the agent was told.
+**Who it is for:** teams who need an agent's report to be checkable by a stranger rather than taken
+on faith—and anyone who has watched a green test suite prove nothing.
 
-`PRIOR_KNOWLEDGE.json` is hashed **before the run.** It carries the system instructions, the tool
-descriptions, the corpus manifest, and an explicit `known_conditions[]` list of defect classes we
-have already named publicly. A finding is `NEW` only if its mechanism appears nowhere in that
-set. Anything matching is `CONFIRMS_KNOWN` — corroboration, never discovery.
+## How did you use TrueForge?
 
-**Novelty is a claim about our record, so it requires reading our record**, and the record is
-hashed first so it cannot be edited afterwards to make a finding look new.
+TrueForge is the substrate, not a wrapper:
 
-The demo corpus is **code that has never been published.** Not this repository, not any commit of
-it. That retires the training-data question rather than merely disclosing it: code written after
-the model's cutoff and never published cannot have been memorised.
+1. **Judgment session.** The model runs with `iteration_limit: 2`, provider-enforced structured JSON,
+   and every optional capability disabled: no sub-agents, generative UI, user questions, file
+   downloads, or sandbox.
+2. **Persisted event evidence.** After every turn, the harness retrieves and audits TrueForge's own
+   event record. Final model content can never stand in for that evidence.
+3. **Daytona relay.** A proposed repair is transported as three hash-bound artifacts into an
+   isolated sandbox. Run 004 reached this rung: `sandbox.created`, a real `exec`, and a real result.
+4. **Measured authority gate.** A change proposal can exist only after candidate evidence reports
+   `VERIFIED_IN_DAYTONA` with exit code `0`. Every proposal remains
+   `AWAITING_HUMAN_APPROVAL`; the target repository is never mounted in either model surface.
 
-## How it uses TrueForge
+TrueForge also forced the most important correction in the project. Our original contract asserted
+that the judgment model had zero tools. Stock TrueForge constructs `currentDateTime` above every
+configuration switch, so zero tools is unsatisfiable. We preserved that falsified prediction,
+disclosed the unavoidable capability, and restated the experiment accurately: **the agent's only
+tool is a clock, and a clock tells it nothing about the code.**
 
-- **Sessions and turns** run the judgment loop. The judgment session has **zero tools and its
-  sandbox disabled** — it receives corpus bytes and returns JSON, nothing else.
-- **Daytona sandbox**, reached through the harness, executes each candidate repair before it can
-  become a proposal. A repair that has not run and exited zero cannot be proposed.
-- **MCP** proved out on `deepwiki` during substrate verification: a real remote tool call with a
-  matching `tool.response`.
-- **The human approval pause** is the point of the whole thing. The agent emits a
-  `ChangeProposal` whose schema **cannot represent an applied change** — `applied` is
-  `const: false`, `apply_capability_exposed_to_agent` is `const: false`. Approval fails closed:
-  no answer, dead session, unreadable token all resolve to not approved.
+## How did you use Qodo?
 
-**A rule the agent obeys is a request. A capability the agent does not possess is a control.**
-The agent has no tool, path, or credential that mutates the target.
+Qodo reviewed every substantive change across four pull requests: **34 inline review comments**
+(`GET /pulls/{n}/comments`, authored by `qodo-code-review[bot]`: `13 + 8 + 5 + 8`).
 
-## What is proven, with receipts
+PR #1 deliberately carried four defects that were frozen and hashed before the pull request opened.
+Six review cycles produced thirteen findings; all were resolved, followed by a final review on the
+merged bytes (`121a24f`, merged as `29ac06f`). The point was not to trick the reviewer. It was to
+make reviewer performance checkable against a record that could not move afterward.
 
-| | Evidence |
-|---|---|
-| TrueForge boots | `/healthz` returns `OK!` on stock 0.1.4 |
-| A model completes a turn | `state.status: done`, 106 ms, Haiku 4.5, $0.0019 |
-| A real MCP tool executes | `tool_info.type: mcp`, server `deepwiki`, matching response |
-| Code runs in Daytona | `sandbox.created`, `exec`, `exitCode: 0`, `result: "323\n"` |
-| The model finds defects unaided | 7 tool calls, cloned a repo, selected the right file, **ran the program**, found the defect. $0.0386 |
-| Memorisation ruled out | same defect class found on never-published code |
+Qodo's controlling review on PR #4 reports `Bugs (0)` and `Rule violations (0)` against exact head
+`0220a276…`. We treated that clearance as head-specific: new bytes required a new review.
 
-All measured against **unmodified TrueForge 0.1.4.** No compatibility patch is shipped or
-required. Total spend across every probe: **under five cents.**
+One Qodo finding became the experiment's control. It caught an empty-collection check where
+`providerConfigured({"data":[]})` returned configured. That class became **K1** in the frozen known
+conditions. Days later, the judgment agent found K1's mechanism in the unpublished corpus and
+classified it `CONFIRMS_KNOWN` rather than claiming a discovery.
 
-## What is not proven, stated here because it would otherwise be inferred
+## What the live evidence establishes
 
-- **The authority boundary is untested.** The breaker's live §4.2 attempt failed closed before
-  reaching Daytona, and it failed **for a reason unrelated to the boundary** — the relay's token
-  budget. A fail-closed for the wrong reason is not a control holding. It is not a PASS and we do
-  not report it as one.
-- **The success path is currently unreachable.** The relay cannot emit a harness-computed exec
-  command at any input size, so a verified `ChangeProposal` cannot be produced live. Found by
-  attacking something else. **Eighty offline tests were green about a path that cannot execute.**
-- **No judgment run against the sealed corpus has occurred.**
-- **Nothing here establishes that the model reasoned rather than pattern-matched.** No artifact in
-  this project supports that claim and we do not make it.
+Run 004 established the following rungs:
+
+- provider-enforced structured output produced directly parseable JSON;
+- the agent returned one bounded repair and classified its finding `CONFIRMS_KNOWN / K1`;
+- the harness prepared and transported three hash-bound artifacts;
+- TrueForge created a Daytona sandbox and persisted one matching `exec` call and response;
+- the sandbox executed the command and returned `exitCode: 127` with
+  `node: command not found`.
+
+The measured sandbox image is Python 3.13 and exposes no `node`, `nodejs`, `deno`, or `bun`. Stock
+TrueForge 0.1.4 exposes no supported image override in its public provider settings. Both the fixed
+verifier and the corpus's own verification command require Node.
+
+Therefore **candidate verification is not established**. No `ChangeProposal` was produced, no demo
+run artifact was written, no target was mutated, and no successful run is claimed.
+
+An earlier substrate probe returned `exitCode: 0` and `323\n`; that proves only that the Link 4
+TrueForge-to-Daytona execution substrate worked for that probe. It is not candidate-verification
+evidence and is not presented as such.
 
 ## What broke along the way
 
-**Twenty-plus defects, none of which reached `main`.**
+The project repeatedly caught its own contracts and harness making stronger claims than the runtime
+supported:
 
-Four we froze and hashed **before** opening the first pull request, then shipped deliberately
-undisclosed-to-Qodo so the review trail would run against code already documented as broken. A
-review of code we had quietly fixed would prove nothing about the reviewer.
+- the contract claimed zero tools, while stock TrueForge always provided a clock;
+- `json_object` was accepted and stored but did not enforce a direct JSON envelope;
+- the harness required `repair.before_exact === exact_bytes` without telling the agent;
+- the harness expected an exec object with only `command`, while TrueForge required both `intent`
+  and `command`;
+- a valid nonzero sandbox response was mislabeled as a malformed envelope.
 
-Then: thirteen Qodo findings across six review cycles on PR #1 alone. Three of those thirteen
-turned out to be **one defect wearing three faces** — absence reading as a pass — and the third
-instance was written *while repairing the second.*
+These were exposed by live runs and replaying their exact outputs through the downstream gates—not
+by treating a green offline suite as integration evidence. Every correction retained the failed
+prediction instead of rewriting history around it.
 
-The judgment contract went through **four versions. Three of the four amendments were forced by
-seats other than the author**, and every one found a contradiction the author had read past:
+## Why the review trail is part of the artifact
 
-- The answer key was inside the demo corpus, and "don't read it" was a prompt instruction rather
-  than a control.
-- The success criterion required a novelty class the demo could not honestly produce.
-- Corpus isolation was structural on disk and defeated by a network the sandbox has — proven by
-  our own probe, which cloned a public repo unprompted as its first move.
-- One repair fixed §8 and left §1 contradicting it.
+An independent reviewer broke our receipt-validation fix three minutes after it was pushed: the
+validator recomputed its verdict over a field list supplied by the receipt itself. Absence read as a
+pass one layer inside the fix for absence reading as a pass.
 
-**We also withdrew a public claim.** We reported an upstream packaging bug in TrueForge and were
-wrong — the cause was our own damaged lockfile, and npm had said so in a warning we read past. It
-was caught by a teammate who had been assigned to file the issue, ran the check, found it did not
-reproduce, and refused. The withdrawal is in the commit history.
+The roles stayed separate. A contract author could not clear the implementation. An implementer's
+BLOCK was admissible because it was self-incriminating; an implementer's PASS was not enough to
+close an independent gate. Qodo clearance, offline tests, and live execution were recorded at their
+actual evidence rungs rather than collapsed into one green label.
 
-One upstream issue **does** stand on its own evidence:
-[truefoundry/trueforge#461](https://github.com/truefoundry/trueforge/issues/461) — TrueForge
-reports a valid Daytona key as invalid when it lacks the separate `write:snapshots` permission.
+**Green tests measure conformance to a document. They do not establish that the document is right.**
 
-## Why the review trail is the artifact
+---
 
-Every substantive change went through a pull request reviewed by Qodo before merge. Not as
-process theatre: **an independent reviewer broke our receipt-validation fix three minutes after
-we pushed it**, because the validator recomputed its verdict over a field list the receipt itself
-supplied. Absence reading as a pass, one layer inside the fix for absence reading as a pass.
+## Three-minute demo narrative
 
-The seats are separated on purpose. The contract author cannot clear an implementation. The
-implementer cannot rule on the authority test. **A maker's BLOCK is admissible because it is
-self-incriminating; a maker's PASS is worthless because nothing was risked.** The implementer
-declined to merge a Qodo-clear pull request because the contract assigned that verdict elsewhere.
+### 0:00–0:30 — The problem
 
-**Green tests measure conformance to a document. They say nothing about whether the document is
-right.** That is the thesis this project was built to test, and it kept proving itself on us.
+*[Screen: the two-file unpublished corpus]*
+
+> This agent is about to read two files it has never seen. Nobody tells it what is wrong. The word
+> “bug” does not appear anywhere in its prompt.
+>
+> Finding a defect is not the hard part. Trusting the report is.
+
+### 0:30–1:15 — Architecture and authority
+
+*[Screen: `PRIOR_KNOWLEDGE_RUN_004.json`, then its SHA-256]*
+
+> Before the run, we freeze every defect class we already know about and bind the governing bytes.
+> The agent must say whether a finding is new, confirms something known, or changes what is known.
+>
+> Its only tool is a clock. The target repository is never mounted. A proposal can exist only after
+> the sandbox measurement reports verified execution with exit code zero, and even then it remains
+> waiting for human approval.
+
+### 1:15–2:15 — Run 004
+
+*[Screen: the Run 004 model result and persisted events]*
+
+> It found that missing lab results become an empty list and the `labs.length > 0` guard evaluates
+> false. The release decision reads absence as a pass.
+>
+> Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It found a real condition and told me it
+> was not new, against knowledge frozen before the run.
+>
+> The repair then entered the Daytona relay as three hash-bound artifacts. `sandbox.created`. One
+> real command. One real response.
+
+### 2:15–3:00 — The limit, shown directly
+
+*[Screen: `exitCode: 127` and `node: command not found`]*
+
+> This is where the evidence stops. The stock sandbox is Python 3.13 with no JavaScript runtime, so
+> candidate verification is not established. I am not showing a green checkmark that says it is.
+>
+> The product is not just an agent that finds defects. It is a system that makes the agent earn
+> authority through measured conditions, preserves the failed predictions, and says what did not
+> work in the same breath as what did.
+
+`RUN 004 REACHED DAYTONA / CANDIDATE NOT VERIFIED / NO SUCCESSFUL RUN CLAIMED`
