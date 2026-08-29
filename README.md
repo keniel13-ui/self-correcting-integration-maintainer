@@ -43,7 +43,7 @@ The contest build narrows the task surface, not the cognitive depth.
 
 ```bash
 npm ci
-npm test                 # 47 tests, no network required
+npm test                 # no network required
 npm run verify:prereqs   # Node + package resolution only; writes local-prereqs.json on pass
 ```
 
