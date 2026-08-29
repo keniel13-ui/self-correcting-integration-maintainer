@@ -26,8 +26,9 @@ committed the defect classes we already knew about before execution in
 `NEW` claim that cites one. Editing the file changes its identity; it cannot silently rewrite which
 knowledge governed a completed run.
 
-The agent found a real condition in never-published code. Then it reported that the condition was
-already known.
+The agent returned a concrete claim tied to exact bytes in never-published code, then self-reported
+it as already known. Inspection later showed both the interpretation and the class match were wrong
+— which is the measured boundary this project exists to find, not a footnote to it.
 
 **Who it is for:** teams who need an agent's report to be checkable by a stranger rather than taken
 on faith—and anyone who has watched a green test suite prove nothing.
@@ -70,8 +71,9 @@ Qodo's controlling review on PR #4 reports `Bugs (0)` and `Rule violations (0)` 
 
 One Qodo finding became the experiment's control. It caught an empty-collection check where
 `providerConfigured({"data":[]})` returned configured. That class became **K1** in the frozen known
-conditions. Days later, the judgment agent found K1's mechanism in the unpublished corpus and
-classified it `CONFIRMS_KNOWN` rather than claiming a discovery.
+conditions. Days later, the judgment agent returned a superficially similar condition in the unpublished corpus
+and self-classified it `CONFIRMS_KNOWN` rather than claiming a discovery. Inspection showed that
+class match was wrong.
 
 ## What the live evidence establishes
 
@@ -171,8 +173,8 @@ actual evidence rungs rather than collapsed into one green label.
 > exit code; it can, and that consequence does not hold. The bytes it quoted are exact and the patch
 > is bounded, but the interpretation and the K1 class match both fail inspection.
 >
-> Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It found a real condition and told me it
-> was not new, against knowledge frozen before the run.
+> Then it did the part I care about: `CONFIRMS_KNOWN`. `K1`. It marked its own claim as not new,
+> against knowledge frozen before the run. That class match does not survive inspection.
 >
 > The repair then entered the Daytona relay as three hash-bound artifacts. `sandbox.created`. One
 > real command. One real response.
