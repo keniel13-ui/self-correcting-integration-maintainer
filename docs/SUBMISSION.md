@@ -58,10 +58,11 @@ tool is a clock, and a clock tells it nothing about the code.**
 
 ## How did you use Qodo?
 
-Qodo reviewed every substantive change across six merged pull requests: **37 inline review
-comments as of 2026-08-29** (`GET /pulls/{n}/comments`, authored by
-`qodo-code-review[bot]`: `13 + 9 + 5 + 8 + 0 + 2`). The dated query is named so the count can be
-recomputed rather than treated as permanent.
+Across the six pull requests merged before this PR #6 correction (`#1`, `#2`, `#3`, `#4`, `#5`,
+and `#7`), Qodo authored **37 inline review comments as of 2026-08-29**
+(`GET /pulls/{n}/comments`, authored by `qodo-code-review[bot]`:
+`13 + 9 + 5 + 8 + 0 + 2`). Naming the measured PRs, date, query, and author keeps this historical
+count recomputable without pretending it includes the correction that records it.
 
 PR #1 deliberately carried four defects that were frozen and hashed before the pull request opened.
 Six review cycles produced thirteen findings; all were resolved, followed by a final review on the
