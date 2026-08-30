@@ -1,0 +1,94 @@
+{
+  "artifact_written": false,
+  "corpus_manifest_sha256": "914b22f52a9d7d8ce382458caa3915cc47841ccfd153f72f314107c55be08fb6",
+  "disclosure": "Run 004 FAILED before a judgment_run_artifact was written. executeJudgmentLoop throws when candidate verification does not return VERIFIED_IN_DAYTONA, so no docs/demo/runs bundle exists. This receipt preserves what was retained. It is not a successful-run artifact and does not claim one.",
+  "executed_at_utc": "2026-08-29T12:02:41Z",
+  "governing_prior": "docs/contracts/PRIOR_KNOWLEDGE_RUN_004.json",
+  "governing_prior_sha256": "93820ea5a67e732aa55e896cd838200c3590af1e98368fd87e85dfd66da1cf1e",
+  "judgment_session_id": "01m16pd3dp6rj9b1x82sx0j6e4",
+  "not_established": [
+    "candidate verification",
+    "a change proposal",
+    "human approval",
+    "any target mutation",
+    "the semantic correctness of the CONFIRMS_KNOWN / K1 classification"
+  ],
+  "not_retained": [
+    "the two corpus source files (sealed; manifest hash published instead)",
+    "a judgment_run_artifact.json (never written; the run threw first)"
+  ],
+  "outcome": "SCAN_DID_NOT_COMPLETE: candidate verification blocked: EXEC_ARGUMENTS_MISMATCH,EXEC_RESPONSE_SHAPE_UNEXPECTED",
+  "parsed_finding": {
+    "findings": [
+      {
+        "condition": "absence reads as a pass",
+        "confidence_basis": "The code structure directly matches the pattern: a filter operation that can produce an empty collection, an explicit check that treats empty as failure, but no corresponding check that non-empty means success. The exit code 2 signals failure only when the collection is empty; success is signaled by the absence of that exit, which is the inverse of a positive assertion.",
+        "evidence": [
+          "The filter `names.filter(allowForm)` can return an empty array if no filenames match the PDF criterion",
+          "The condition `if (accepted.length === 0)` explicitly handles the empty case by exiting with code 2",
+          "However, when `accepted.length > 0`, the code proceeds to write output without verifying that the acceptance criteria were actually meaningful or that downstream processing will succeed",
+          "The allowForm function only checks for '.pdf' substring presence (case-insensitive), so 'history.PDF' passes but 'intake.pdf' and 'notes.txt' do not, leaving accepted with exactly one element in the sample data"
+        ],
+        "exact_bytes": "const accepted = names.filter(allowForm);\nif (accepted.length === 0) {\n  process.exit(2);\n}\nprocess.stdout.write(`${JSON.stringify({ accepted })}\\n`);",
+        "known_condition_id": "K1",
+        "not_established": [
+          "Whether the caller actually checks the exit code or parses the JSON output",
+          "Whether a single accepted file is sufficient for the downstream process or if multiple files are required",
+          "Whether the allowForm function's case-insensitive PDF check matches the actual file-naming conventions in production"
+        ],
+        "novelty": "CONFIRMS_KNOWN",
+        "path": "forms.mjs",
+        "repair": {
+          "after_exact": "const accepted = names.filter(allowForm);\nif (accepted.length === 0) {\n  process.exit(2);\n}\nif (accepted.length > 0) {\n  process.stdout.write(`${JSON.stringify({ accepted })}\\n`);\n} else {\n  process.exit(2);\n}",
+          "before_exact": "const accepted = names.filter(allowForm);\nif (accepted.length === 0) {\n  process.exit(2);\n}\nprocess.stdout.write(`${JSON.stringify({ accepted })}\\n`);"
+        },
+        "why_it_matters": "When no files pass the allowForm filter, the process exits with code 2, but when the filter succeeds (even with a single matching file), the result is written to stdout and the process exits normally with code 0. The caller cannot distinguish between 'all files were rejected' and 'some files were accepted' from the exit code alone. The empty-array case is treated as a hard failure, but the success case lacks corresponding validation that the accepted list is non-empty before reporting success."
+      }
+    ],
+    "schema": "judgment_response/v1"
+  },
+  "prior_freeze_commit": "5bf10acd7a6c0dd80e90d99217c2610df0d86d74",
+  "raw_model_response": "{\"schema\":\"judgment_response/v1\",\"findings\":[{\"condition\":\"absence reads as a pass\",\"path\":\"forms.mjs\",\"exact_bytes\":\"const accepted = names.filter(allowForm);\\nif (accepted.length === 0) {\\n  process.exit(2);\\n}\\nprocess.stdout.write(`${JSON.stringify({ accepted })}\\\\n`);\",\"why_it_matters\":\"When no files pass the allowForm filter, the process exits with code 2, but when the filter succeeds (even with a single matching file), the result is written to stdout and the process exits normally with code 0. The caller cannot distinguish between 'all files were rejected' and 'some files were accepted' from the exit code alone. The empty-array case is treated as a hard failure, but the success case lacks corresponding validation that the accepted list is non-empty before reporting success.\",\"evidence\":[\"The filter `names.filter(allowForm)` can return an empty array if no filenames match the PDF criterion\",\"The condition `if (accepted.length === 0)` explicitly handles the empty case by exiting with code 2\",\"However, when `accepted.length > 0`, the code proceeds to write output without verifying that the acceptance criteria were actually meaningful or that downstream processing will succeed\",\"The allowForm function only checks for '.pdf' substring presence (case-insensitive), so 'history.PDF' passes but 'intake.pdf' and 'notes.txt' do not, leaving accepted with exactly one element in the sample data\"],\"novelty\":\"CONFIRMS_KNOWN\",\"known_condition_id\":\"K1\",\"confidence_basis\":\"The code structure directly matches the pattern: a filter operation that can produce an empty collection, an explicit check that treats empty as failure, but no corresponding check that non-empty means success. The exit code 2 signals failure only when the collection is empty; success is signaled by the absence of that exit, which is the inverse of a positive assertion.\",\"not_established\":[\"Whether the caller actually checks the exit code or parses the JSON output\",\"Whether a single accepted file is sufficient for the downstream process or if multiple files are required\",\"Whether the allowForm function's case-insensitive PDF check matches the actual file-naming conventions in production\"],\"repair\":{\"before_exact\":\"const accepted = names.filter(allowForm);\\nif (accepted.length === 0) {\\n  process.exit(2);\\n}\\nprocess.stdout.write(`${JSON.stringify({ accepted })}\\\\n`);\",\"after_exact\":\"const accepted = names.filter(allowForm);\\nif (accepted.length === 0) {\\n  process.exit(2);\\n}\\nif (accepted.length > 0) {\\n  process.stdout.write(`${JSON.stringify({ accepted })}\\\\n`);\\n} else {\\n  process.exit(2);\\n}\"}}]}",
+  "raw_model_response_sha256": "e8bf68a80398d8754eef5c8859c66113f42e7f00732da597b0ac43e6469d6d85",
+  "relay_events": [
+    {
+      "type": "sandbox.created"
+    },
+    {
+      "type": "turn.created"
+    },
+    {
+      "content": "I'll execute the verification command as instructed.",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"intent\": \"Run candidate verification\", \"command\": \"node /opt/tf/uploads/candidate-verifier.cjs /opt/tf/uploads/candidate-payload.json /opt/tf/uploads/candidate-command-manifest.json\"}",
+            "name": "exec"
+          },
+          "id": "toolu_01EU2HZGHhAX5v98pGMjMrnz",
+          "tool_info": {
+            "name": "exec",
+            "type": "truefoundry-system"
+          },
+          "type": "function"
+        }
+      ],
+      "type": "model.message"
+    },
+    {
+      "content": "{\"success\":true,\"response\":{\"exitCode\":127,\"result\":\"/usr/bin/bash: line 1: node: command not found\\n\"}}",
+      "type": "tool.response"
+    },
+    {
+      "content": "VERIFICATION_RELAY_COMPLETE",
+      "type": "model.message"
+    },
+    {
+      "type": "turn.done"
+    }
+  ],
+  "relay_session_id": "01m16pdw2b7zybpp5g3q5gfeza",
+  "run": "Run 004",
+  "sandbox_response": "{\"success\":true,\"response\":{\"exitCode\":127,\"result\":\"/usr/bin/bash: line 1: node: command not found\\n\"}}",
+  "schema": "run_004_failed_receipt/v1"
+}
