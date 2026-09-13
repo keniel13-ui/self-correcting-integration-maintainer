@@ -29,6 +29,8 @@ const FAILURE_ORDER = [
   'TURN_NOT_DONE',
   'SANDBOX_EVENT_CARDINALITY_INVALID',
   'EXEC_CALL_CARDINALITY_INVALID',
+  'EXEC_COMPARATOR_ERROR',
+  'EXEC_ARGUMENTS_INVALID',
   'EXEC_ARGUMENTS_MISMATCH',
   'TOOL_RESPONSE_CARDINALITY_INVALID',
   'TOOL_RESPONSE_ID_MISMATCH',
@@ -160,7 +162,7 @@ export function inspectPreparedTransport(prepared) {
         failures.add('EXEC_ARGUMENTS_MISMATCH');
       }
     } catch {
-      failures.add('EXEC_ARGUMENTS_MISMATCH');
+      failures.add('EXEC_COMPARATOR_ERROR');
     }
   }
   evidence.sort((left, right) => Buffer.compare(Buffer.from(left.role), Buffer.from(right.role)));
@@ -500,15 +502,22 @@ export function reduceCandidateVerification({
     failures.add('EXEC_CALL_CARDINALITY_INVALID');
   }
   if (call) {
+    let actual;
     try {
-      const actual = parseStrictJson(call.function.arguments);
-      if (typeof actual?.command === 'string' && Buffer.byteLength(actual.command, 'utf8') > 256) {
-        failures.add('EXEC_COMMAND_OVERSIZE');
-      } else if (!canonicalJsonBytes(actual).equals(canonicalJsonBytes(prepared.expectedExecArguments))) {
-        failures.add('EXEC_ARGUMENTS_MISMATCH');
-      }
+      actual = parseStrictJson(call.function.arguments);
     } catch {
-      failures.add('EXEC_ARGUMENTS_MISMATCH');
+      failures.add('EXEC_ARGUMENTS_INVALID');
+    }
+    if (actual !== undefined) {
+      try {
+        if (typeof actual?.command === 'string' && Buffer.byteLength(actual.command, 'utf8') > 256) {
+          failures.add('EXEC_COMMAND_OVERSIZE');
+        } else if (!canonicalJsonBytes(actual).equals(canonicalJsonBytes(prepared.expectedExecArguments))) {
+          failures.add('EXEC_ARGUMENTS_MISMATCH');
+        }
+      } catch {
+        failures.add('EXEC_COMPARATOR_ERROR');
+      }
     }
   }
   const responses = events.filter(event => event?.type === 'tool.response');
