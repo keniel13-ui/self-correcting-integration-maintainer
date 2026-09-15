@@ -63,15 +63,41 @@ test('a usable call that differs is EXEC_ARGUMENTS_MISMATCH', () => {
   assert.ok(!r.includes('EXEC_ARGUMENTS_INVALID'));
 });
 
-test('a comparison that cannot complete is EXEC_COMPARATOR_ERROR', () => {
-  // The arriving call is usable. Our own expected object carries a BigInt,
-  // which canonicalJson rejects, so the comparison throws. Harness side.
+test('OUR invalid expectation is EXEC_EXPECTATION_INVALID, not a comparator error', () => {
+  // Found by Vinh (DEV 3f06i): both canonicalJsonBytes calls shared one try, so a
+  // bad frozen fixture reported as EXEC_COMPARATOR_ERROR. The old name blamed the
+  // arguments for a comparator failure; the first fix blamed the comparator for a
+  // fixture failure. The expected side is now canonicalized before the comparison.
   const r = reduce('{"command":"node verify.js","intent":"Run candidate verification"}',
                    { command: 'node verify.js', intent: 1n });
-  assert.ok(r.includes('EXEC_COMPARATOR_ERROR'), `got ${r.join(',')}`);
-  assert.ok(!r.includes('EXEC_ARGUMENTS_INVALID'), 'what arrived was usable');
-  assert.ok(!r.includes('EXEC_ARGUMENTS_MISMATCH'), 'no comparison completed, so nothing mismatched');
+  assert.ok(r.includes('EXEC_EXPECTATION_INVALID'), `got ${r.join(',')}`);
+  assert.ok(!r.includes('EXEC_COMPARATOR_ERROR'), 'our fixture is not our machinery');
+  assert.ok(!r.includes('EXEC_ARGUMENTS_INVALID'), 'what arrived was fine');
+  assert.ok(!r.includes('EXEC_ARGUMENTS_MISMATCH'), 'no comparison ran');
 });
+
+test('a bad expectation still reports when the arriving args are ALSO bad', () => {
+  // Beyond Vinh's fix: hoisting only above the inner try would leave the fixture
+  // check behind the arriving-args guard, so our defect would hide behind theirs.
+  // Both must report independently.
+  const r = reduce('{ not json', { command: 'node verify.js', intent: 1n });
+  assert.ok(r.includes('EXEC_EXPECTATION_INVALID'), `expectation side missing: ${r.join(',')}`);
+  assert.ok(r.includes('EXEC_ARGUMENTS_INVALID'), `arriving side missing: ${r.join(',')}`);
+  assert.ok(!r.includes('EXEC_COMPARATOR_ERROR'));
+  assert.ok(!r.includes('EXEC_ARGUMENTS_MISMATCH'));
+});
+
+// The inner EXEC_COMPARATOR_ERROR in reduceCandidateVerification: NOT reached by
+// any input I could construct after the hoist. parseStrictJson and the canonical
+// serializer have matching strictness — non-safe integers, -0, floats and non-NFC
+// strings are all rejected at parse, so anything reaching the comparison
+// canonicalizes, and Buffer.equals on two Buffers does not throw. `actual` comes
+// from the parser so it cannot carry a throwing getter.
+//
+// Recording what I tried rather than calling it dead: an earlier revision of this
+// file declared a different catch unreachable on one input class and was wrong.
+// The catch stays. It has no test because I could not reach it, which is a
+// different statement from "nothing can".
 
 // The two paths below had no coverage at all. Kairos exercised them by hand;
 // preserving them here so a future edit cannot silently drop a reason.

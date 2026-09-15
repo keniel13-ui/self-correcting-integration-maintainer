@@ -30,6 +30,7 @@ const FAILURE_ORDER = [
   'SANDBOX_EVENT_CARDINALITY_INVALID',
   'EXEC_CALL_CARDINALITY_INVALID',
   'EXEC_COMPARATOR_ERROR',
+  'EXEC_EXPECTATION_INVALID',
   'EXEC_ARGUMENTS_INVALID',
   'EXEC_ARGUMENTS_MISMATCH',
   'TOOL_RESPONSE_CARDINALITY_INVALID',
@@ -502,17 +503,23 @@ export function reduceCandidateVerification({
     failures.add('EXEC_CALL_CARDINALITY_INVALID');
   }
   if (call) {
+    let expectedBytes;
+    try {
+      expectedBytes = canonicalJsonBytes(prepared.expectedExecArguments);
+    } catch {
+      failures.add('EXEC_EXPECTATION_INVALID');
+    }
     let actual;
     try {
       actual = parseStrictJson(call.function.arguments);
     } catch {
       failures.add('EXEC_ARGUMENTS_INVALID');
     }
-    if (actual !== undefined) {
+    if (actual !== undefined && expectedBytes !== undefined) {
       try {
         if (typeof actual?.command === 'string' && Buffer.byteLength(actual.command, 'utf8') > 256) {
           failures.add('EXEC_COMMAND_OVERSIZE');
-        } else if (!canonicalJsonBytes(actual).equals(canonicalJsonBytes(prepared.expectedExecArguments))) {
+        } else if (!canonicalJsonBytes(actual).equals(expectedBytes)) {
           failures.add('EXEC_ARGUMENTS_MISMATCH');
         }
       } catch {

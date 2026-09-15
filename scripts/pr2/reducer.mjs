@@ -120,15 +120,21 @@ export function reduceExecution({
   }
   const execToolCallIds = sortedUnique(calls.map(item => item?.id));
   if (call) {
+    let expectedBytes;
+    try {
+      expectedBytes = canonicalJsonBytes(expectedExecArguments);
+    } catch {
+      failures.add('EXEC_EXPECTATION_INVALID');
+    }
     let parsed;
     try {
       parsed = validateExecArguments(parseStrictJson(call.function.arguments));
     } catch {
       failures.add('EXEC_ARGUMENTS_INVALID');
     }
-    if (parsed !== undefined) {
+    if (parsed !== undefined && expectedBytes !== undefined) {
       try {
-        if (!canonicalJsonBytes(parsed).equals(canonicalJsonBytes(expectedExecArguments)) ||
+        if (!canonicalJsonBytes(parsed).equals(expectedBytes) ||
             sha256(canonicalJsonBytes(parsed)) !== manifest.exec_arguments_sha256) {
           failures.add('EXEC_ARGUMENTS_MISMATCH');
         }
