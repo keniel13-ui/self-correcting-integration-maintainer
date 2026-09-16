@@ -1174,12 +1174,16 @@ test('J15 fixed verifier reports actual identities and rejects changed bytes off
 // ---------------------------------------------------------------------------
 // B2 — the PRE-MODEL gate must not emit model-evaluation names.
 //
-// inspectPreparedTransport runs before the model exists in the run:
-//   :607 its failures become `preflight`
-//   :214 / :242 assertPreparedTransport, inside the client
-//   :224 the instruction string carrying JSON.stringify(expectedArguments)
-//   :616-620 preflight.length > 0 -> reduceCandidateVerification({ events: [], ... })
-// So a run that never contacted a model can return EXEC_ARGUMENTS_MISMATCH,
+// inspectPreparedTransport runs before the model exists in the run. Call sites are
+// named, not numbered, because the first version of this header cited :214/:242/:607
+// and those numbers were already stale on the commit that added them — the fix itself
+// inserted lines above them. Caught by Aethar reviewing d828618.
+//   * runCandidateVerification takes this function's failure_reasons as `preflight`
+//     and reduces them with events: [] and turnStatus 'preflight_blocked'
+//   * assertPreparedTransport, called from createRelaySession immediately before the
+//     instruction string carrying JSON.stringify(expectedArguments) is built
+//   * assertPreparedTransport again, from the second client session path
+// So a run that never contacted a model could return EXEC_ARGUMENTS_MISMATCH,
 // a name asserting the arguments deviated, with events: [].
 //
 // Rows R1-R7 are frozen in docs/CONTRACT_B2_PREMODEL_NAMESPACE_2026-09-16.md

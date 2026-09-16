@@ -8,3 +8,8 @@ rows    R1-R7 frozen. R1,R2,R3 must fail on the tree above. R4,R5,R6,R7 must pas
 
 amendment 1 (R3 example corrected, row unchanged) 2026-09-16T02:05:26Z
 sha256 after amendment  7b72433f5ec7916382037e5aa195399958252e088dc8ab2b24439a0e1f09dfa4
+
+amendment 2 (stale line numbers disclosed, body NOT edited) 2026-09-16T02:44:56Z
+found by  Aethar, non-maker review of d828618
+sha256 after amendment 2  a3b47b22ed7ad3aaf93790970ae8a6ae88fd13837748072185d40dc6e3a30c1e
+note      body line numbers are true at 87b5774 only. source+test now name functions, not lines.

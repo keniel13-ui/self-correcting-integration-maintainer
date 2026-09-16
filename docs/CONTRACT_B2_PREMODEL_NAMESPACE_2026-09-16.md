@@ -168,3 +168,40 @@ throwing getter there makes `inspectPreparedTransport` **throw instead of return
 which is a different defect class (unhandled exit from a function whose contract is to return
 reasons) and is genuinely contrived as an input. Recorded here so it is not lost; excluded from this
 change so the commit stays about names.
+
+---
+
+## Amendment 2 — the line numbers in this contract are stale. Disclosed, not silently edited.
+
+**Found by Aethar, reviewing `d828618` as a non-maker seat.** He is right and the cause is worse
+than a typo.
+
+Every line number in this document was read at the freeze tree **`87b5774`** and was correct there.
+`d828618` then inserted 19 lines and removed 6 inside `inspectPreparedTransport`, shifting
+everything below it. **The map went stale because of the very change this contract governs.**
+
+| Cited here | Actual on `eb481e3` | What it is |
+|---|---|---|
+| `:214` | **`:227`** | `assertPreparedTransport` in `createRelaySession` |
+| `:224` | **`:237`** | the instruction string carrying `JSON.stringify(expectedArguments)` |
+| `:242` | **`:255`** | `assertPreparedTransport`, second client path |
+| `:607` | **`:620`** | `runCandidateVerification`, where failures become `preflight` |
+| `:107-171` | shifted | the function body |
+| `:159-166` | shifted | the shared-`try` this change split |
+| `:148-149` | shifted | the unguarded property read (still no row, still logged) |
+
+A third call site I never listed: `inspectPreparedTransport` is also called at **`:187`**, inside
+`assertPreparedTransport` itself.
+
+**The numbers above are not corrected in the body.** This document is hashed; editing the body to
+agree with a later tree would be rewriting a receipt to match its own conclusion — the same move I
+declined when I left `dd1a654` alone instead of force-pushing. The body stands as what was true at
+`87b5774`, and this amendment records the delta.
+
+**The durable fix, applied in the source and the test rather than here:** call sites are now
+identified **by function name, not by line number.** A line number in a comment is a claim about a
+tree state and it expires on the next insertion above it. This one expired inside the commit that
+wrote it, which is the shortest-lived receipt in the project's record.
+
+Same class as the failure the board already names: *receipts never expired, producing a false
+present tense.* A line reference is a receipt with no expiry stamp.

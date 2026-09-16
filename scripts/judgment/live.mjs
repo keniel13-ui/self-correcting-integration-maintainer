@@ -150,10 +150,18 @@ export function inspectPreparedTransport(prepared) {
   const argumentKeys = expectedArguments && typeof expectedArguments === 'object' && !Array.isArray(expectedArguments)
     ? Object.keys(expectedArguments).sort()
     : [];
-  // This function runs BEFORE the model is invoked (see :214/:242, and :607 where
-  // its output becomes `preflight` for a run with events: []). Nothing has arrived
-  // yet, so no failure reachable from here can be a statement about the model.
-  // Every name below is scoped to the expectation or to this machinery.
+  // This function runs BEFORE the model is invoked. Call sites, by name rather than
+  // by line, because a line number in a comment expires the next time anyone inserts
+  // above it — this comment cited :214/:242/:607 and was already wrong by the time
+  // the commit that introduced it landed:
+  //   * assertPreparedTransport, from JudgmentTrueForgeClient.createRelaySession,
+  //     which then builds the instruction string carrying JSON.stringify(expectedArguments)
+  //   * assertPreparedTransport, from the second client session path
+  //   * runCandidateVerification, whose `preflight` array is this function's
+  //     failure_reasons, reduced with events: [] and turnStatus 'preflight_blocked'
+  // Nothing has arrived at any of those points, so no failure reachable from here can
+  // be a statement about the model. Every name below is scoped to the expectation or
+  // to this machinery.
   if (argumentKeys.length !== 2 || argumentKeys[0] !== 'command' || argumentKeys[1] !== 'intent' ||
       expectedArguments.intent !== CANDIDATE_VERIFICATION_INTENT ||
       typeof command !== 'string' || command.length === 0) {
