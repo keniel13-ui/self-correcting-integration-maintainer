@@ -38,22 +38,51 @@ the server failed to fulfill an otherwise valid request.
 Two things to steal, and the second is the one we do not have at all.
 
 **First: the party is in the class, not in the message.** `404` and `422` differ in detail but agree
-on who is at fault, because they share a digit. You cannot write a 4xx that means "I broke." Our
-27 failure names are a flat list of strings in a `Set`; nothing in the shape of
-`EXEC_ARGUMENTS_MISMATCH` prevents it from being emitted before arguments exist. **That is exactly
-how it was emitted before arguments existed.**
+on who is at fault, because they share a digit.
 
-**Second — and this is CORRECTED from the version first published; see the correction note below.**
-HTTP does **not** attach the action to the class. §9.2.2 ties automatic retry to **method
-idempotency**, not to status class, and `408 Request Timeout` and `429 Too Many Requests` are both
-4xx and both explicitly retryable. So the class answers *whose fault*, and *what to do* is carried
-separately by the individual code and by properties of the method.
+**Bounded, after a breaker catch — the class does not PREVENT misuse, it makes misuse NAMEABLE.**
+An earlier version of this line said *"you cannot write a 4xx that means I broke."* That is false:
+servers return wrong 4xx codes constantly, and the RFC itself hedges — §15.5 says the client
+*"seems to have erred"* (fetched `2026-09-16T21:48:18Z`, `rfc9110.txt` line 7534), not that it did.
 
-That separation is the sharper lesson, and it is the opposite of what I first wrote. HTTP spent
-thirty years not conflating attribution with action, because the same party can be at fault in
-situations demanding opposite responses — `400` and `429` are both the caller's problem and only one
-of them is fixed by waiting. **Attribution and remediation are two axes.** Our 27 names currently
-encode neither.
+What the class actually buys is that **`500`-for-a-`400` is identifiable as wrong by anyone reading
+the response**, without access to the server. That is the property we want, and it is weaker and
+more useful than prevention. Our 27 names are flat strings in a `Set`; nothing in the shape of
+`EXEC_ARGUMENTS_MISMATCH` marks it as an arrival-class name, so its emission before any arguments
+arrived was **not detectable from the receipt** — an outside reader had no way to know the name was
+structurally impossible there. **That** is the gap, and it is what P2 below closes.
+
+**Second — CORRECTED TWICE; see both correction notes below. HTTP does NOT attach the action to the
+class.** §9.2.2 ties automatic retry to **method idempotency**, not to status class. And a 4xx can
+be explicitly retryable — `408 Request Timeout`, §15.5.9, verbatim:
+
+> If the client has an outstanding request in transit, it MAY repeat that request.
+
+Fetched `2026-09-16T21:48:18Z`:
+
+```
+$ curl -s https://www.rfc-editor.org/rfc/rfc9110.txt | grep -c '429'
+0
+$ ... | grep -c 'Too Many Requests'
+0
+$ sed -n '7645,7646p' rfc9110.txt
+   If the client has an outstanding request in transit, it MAY repeat
+   that request.
+```
+
+**That zero is the second correction.** An earlier version of this paragraph cited `429 Too Many
+Requests` as a 9110 counterexample. **429 is not in RFC 9110 at all** — it is RFC 6585 §4, where
+rate limiting *"MAY include a Retry-After header."* `408` alone carries the argument, and it is in
+9110.
+
+So the class answers *whose fault*; *what to do* is carried separately, by the specific code and by
+properties of the method. The RFC makes that split explicit in the same §15.5 sentence: the server
+SHOULD send a representation explaining the error **"and whether it is a temporary or permanent"**
+condition — temporary-versus-permanent being the action-relevant fact, deliberately placed in the
+*representation* rather than in the class.
+
+That separation is the opposite of what I first wrote, and it is the sharper lesson. **Attribution
+and remediation are two axes.** Our 27 names encode neither.
 
 Our names carry neither axis. An operator reading `EXEC_COMPARATOR_ERROR` gets a stage. They do not
 get whose fault it was, and they do not get *should I rerun this, fix my fixture, or open a bug?*
@@ -167,21 +196,41 @@ P1 makes it a property of the existing names.
 
 ---
 
-## Correction, 2026-09-16 — published with an overclaim, found by a breaker
+## Corrections — three, and the second correction needed a third
 
-**This memo went public inside `bb7d047` containing a false claim about RFC 9110:** that a 4xx status
-means retrying the identical request is pointless. **Aethar fetched the RFC and refuted it** —
-`408 Request Timeout` and `429 Too Many Requests` are both 4xx and both retryable, and §9.2.2 ties
-automatic retry to method idempotency rather than to status class.
+**This memo went public inside `bb7d047` with a false claim about RFC 9110**, and then the fix for
+it carried a second false claim. Both were found by Aethar, a non-maker seat, by fetching the file.
+Recorded in order because the sequence is the finding.
 
-What he verified as holding: §15.5 *"the client seems to have erred"* and §15.6 *"the server is aware
-that it has erred."* The class-names-the-party claim stands. The class-determines-the-action claim
-does not.
+**C1 — the original overclaim.** Published: *a 4xx status means retrying the identical request is
+pointless.* False. §9.2.2 ties automatic retry to **method idempotency**, not to status class, and
+`408` is a 4xx the RFC explicitly permits repeating.
 
-**The correction improved the argument rather than weakening it.** HTTP separates attribution from
-remediation on purpose, so P3 above has been rewritten from "attach the action to the class" — which
-HTTP declined to do — to "carry remediation as a second field." Collapsing the two would have been a
-smaller instance of the exact defect this memo is about.
+**C2 — the correction cited a status code that is not in the document.** My C1 fix offered `408`
+**and `429 Too Many Requests`** as 9110 counterexamples. **429 does not appear in RFC 9110.** Zero
+occurrences, and zero for the phrase. It is RFC 6585 §4. Aethar searched the file; I had not, in the
+act of correcting a claim about that same file for not having searched it. `408` alone carries the
+argument.
+
+**C3 — "you cannot write a 4xx that means I broke" was too strong.** Servers send wrong 4xx codes
+routinely, and §15.5 itself says the client *"seems to have erred."* Bounded above to what is
+actually true and more useful: the class does not prevent misuse, it makes misuse **nameable from
+outside**. Which is precisely the property our flat name list lacks, and what P2 closes.
+
+**What holds, verified at the source:** §15.5 *"the client seems to have erred"*, §15.6 *"the server
+is aware that it has erred"*. Class-names-the-party stands. Class-determines-the-action does not.
+
+**The corrections improved the argument each time.** HTTP separates attribution from remediation on
+purpose — §15.5 puts temporary-versus-permanent in the *representation*, not the class — so P3 was
+rewritten from "attach the action to the class," which HTTP declined to do, to "carry remediation as
+a second field." Collapsing the two would have been a smaller instance of the exact defect this memo
+is about.
+
+**The lesson C2 teaches that C1 did not:** I corrected a spec claim by fetching *part* of the spec.
+A partial fetch reported as a verified correction is the same defect one level up, and it is why
+`CLAUDE.md` now requires **the command and its output in the same message** — visible, so the gap
+between "I checked" and "here is what the check printed" cannot hide. The `grep -c '429'` returning
+`0` is pasted above for exactly that reason.
 
 **Same failure mode as the article, one day later.** I asserted a spec's semantics from memory of
 how the spec is usually summarised, inside a document arguing for verified attribution. The
