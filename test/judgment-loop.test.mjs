@@ -1170,3 +1170,93 @@ test('J15 fixed verifier reports actual identities and rejects changed bytes off
   assert.notEqual(verifierMismatch.status, 0);
   assert.match(verifierMismatch.stderr, /VERIFIER_IDENTITY_MISMATCH/);
 });
+
+// ---------------------------------------------------------------------------
+// B2 — the PRE-MODEL gate must not emit model-evaluation names.
+//
+// inspectPreparedTransport runs before the model exists in the run:
+//   :607 its failures become `preflight`
+//   :214 / :242 assertPreparedTransport, inside the client
+//   :224 the instruction string carrying JSON.stringify(expectedArguments)
+//   :616-620 preflight.length > 0 -> reduceCandidateVerification({ events: [], ... })
+// So a run that never contacted a model can return EXEC_ARGUMENTS_MISMATCH,
+// a name asserting the arguments deviated, with events: [].
+//
+// Rows R1-R7 are frozen in docs/CONTRACT_B2_PREMODEL_NAMESPACE_2026-09-16.md
+// (sha in docs/CONTRACT_B2_HASH.txt) and were written BEFORE the fix. Every
+// expected name below comes from that table, not from observed output.
+//
+// Asked for independently by anassBld 3eb86 ("a harness-configuration error,
+// not a model deviation"), Vinh Nguyen 3f06i, naw103 3eahb, pm25coder 3eanf.
+// ---------------------------------------------------------------------------
+
+const EXEC_NAMES = [
+  'EXEC_ARGUMENTS_MISMATCH',
+  'EXEC_EXPECTATION_INVALID',
+  'EXEC_ARGUMENTS_INVALID',
+  'EXEC_COMPARATOR_ERROR',
+  'EXEC_COMMAND_OVERSIZE',
+];
+const execOnly = reasons => reasons.filter(reason => EXEC_NAMES.includes(reason));
+const withExpected = (prepared, expectedExecArguments) => ({ ...prepared, expectedExecArguments });
+const withDigest = (prepared, exec_arguments_sha256) => ({
+  ...prepared,
+  commandManifest: {
+    ...prepared.commandManifest,
+    transport: { ...prepared.commandManifest.transport, exec_arguments_sha256 },
+  },
+});
+
+test('B2-R1 pre-model: MY malformed expectation is EXEC_EXPECTATION_INVALID, not a model deviation', () => {
+  const { prepared } = findingState();
+  const { intent, ...noIntent } = prepared.expectedExecArguments;
+  assert.equal(typeof intent, 'string');
+  const observed = execOnly(inspectPreparedTransport(withExpected(prepared, noIntent)).failure_reasons);
+  assert.deepEqual(observed, ['EXEC_EXPECTATION_INVALID']);
+});
+
+test('B2-R2 pre-model: my manifest digest disagreeing with my own expectation is mine, not the model\'s', () => {
+  const { prepared } = findingState();
+  const observed = execOnly(inspectPreparedTransport(withDigest(prepared, 'a'.repeat(64))).failure_reasons);
+  assert.deepEqual(observed, ['EXEC_EXPECTATION_INVALID']);
+});
+
+test('B2-R3 pre-model: an un-canonicalizable expectation of mine is EXEC_EXPECTATION_INVALID', () => {
+  const { prepared } = findingState();
+  // NFD, not NFC: 'e' + U+0301 combining acute. macOS hands out decomposed paths
+  // by default, so this is a realistic fixture, not a contrived type.
+  const nfd = { ...prepared.expectedExecArguments, command: 'node café.js' };
+  assert.notEqual(nfd.command, nfd.command.normalize('NFC'));
+  const observed = execOnly(inspectPreparedTransport(withExpected(prepared, nfd)).failure_reasons);
+  assert.deepEqual(observed, ['EXEC_EXPECTATION_INVALID']);
+});
+
+test('B2-R4 pre-model: a genuine digest-READ failure stays EXEC_COMPARATOR_ERROR', () => {
+  const { prepared } = findingState();
+  const transport = Object.defineProperty({ ...prepared.commandManifest.transport }, 'exec_arguments_sha256', {
+    enumerable: true,
+    get() { throw new Error('digest read failed'); },
+  });
+  const tampered = { ...prepared, commandManifest: { ...prepared.commandManifest, transport } };
+  const observed = execOnly(inspectPreparedTransport(tampered).failure_reasons);
+  assert.deepEqual(observed, ['EXEC_COMPARATOR_ERROR']);
+});
+
+test('B2-R5 pre-model: an oversize command keeps its own descriptive name', () => {
+  const { prepared } = findingState();
+  const big = { ...prepared.expectedExecArguments, command: 'x'.repeat(257) };
+  const observed = execOnly(inspectPreparedTransport(withExpected(prepared, big)).failure_reasons);
+  assert.deepEqual(observed, ['EXEC_COMMAND_OVERSIZE']);
+});
+
+test('B2-R6 CONTROL a valid prepared fixture reports nothing at all', () => {
+  const { prepared } = findingState();
+  assert.deepEqual(inspectPreparedTransport(prepared).failure_reasons, []);
+});
+
+test('B2-R7 CONTROL a tampered outbound artifact keeps OUTBOUND_ARTIFACT_HASH_MISMATCH', () => {
+  const { prepared } = findingState();
+  const reasons = inspectPreparedTransport(tamperArtifactData(prepared, 'manifest')).failure_reasons;
+  assert.equal(reasons.includes('OUTBOUND_ARTIFACT_HASH_MISMATCH'), true);
+  assert.deepEqual(execOnly(reasons), []);
+});

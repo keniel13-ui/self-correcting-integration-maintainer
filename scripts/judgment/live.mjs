@@ -150,20 +150,33 @@ export function inspectPreparedTransport(prepared) {
   const argumentKeys = expectedArguments && typeof expectedArguments === 'object' && !Array.isArray(expectedArguments)
     ? Object.keys(expectedArguments).sort()
     : [];
+  // This function runs BEFORE the model is invoked (see :214/:242, and :607 where
+  // its output becomes `preflight` for a run with events: []). Nothing has arrived
+  // yet, so no failure reachable from here can be a statement about the model.
+  // Every name below is scoped to the expectation or to this machinery.
   if (argumentKeys.length !== 2 || argumentKeys[0] !== 'command' || argumentKeys[1] !== 'intent' ||
       expectedArguments.intent !== CANDIDATE_VERIFICATION_INTENT ||
       typeof command !== 'string' || command.length === 0) {
-    failures.add('EXEC_ARGUMENTS_MISMATCH');
+    failures.add('EXEC_EXPECTATION_INVALID');
   } else if (Buffer.byteLength(command, 'utf8') > 256) {
     failures.add('EXEC_COMMAND_OVERSIZE');
   } else {
+    // Canonicalizing OUR expectation is hoisted out of the comparison's catch, so a
+    // fixture we cannot serialise is not reported as this machinery failing.
+    let expectedDigest;
     try {
-      if (prepared?.commandManifest?.transport?.exec_arguments_sha256 !==
-          sha256(canonicalJsonBytes(prepared.expectedExecArguments))) {
-        failures.add('EXEC_ARGUMENTS_MISMATCH');
-      }
+      expectedDigest = sha256(canonicalJsonBytes(prepared.expectedExecArguments));
     } catch {
-      failures.add('EXEC_COMPARATOR_ERROR');
+      failures.add('EXEC_EXPECTATION_INVALID');
+    }
+    if (expectedDigest !== undefined) {
+      try {
+        if (prepared?.commandManifest?.transport?.exec_arguments_sha256 !== expectedDigest) {
+          failures.add('EXEC_EXPECTATION_INVALID');
+        }
+      } catch {
+        failures.add('EXEC_COMPARATOR_ERROR');
+      }
     }
   }
   evidence.sort((left, right) => Buffer.compare(Buffer.from(left.role), Buffer.from(right.role)));

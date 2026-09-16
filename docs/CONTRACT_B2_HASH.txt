@@ -1,0 +1,10 @@
+CONTRACT_B2_PREMODEL_NAMESPACE_2026-09-16.md
+sha256  11b879ec67e244c2b1a97a3c5c61ddb3d9e24bfe6cb16352f85ab0a8b441aa3f
+frozen  2026-09-16T02:02:17Z
+tree    87b577455834e04ab18814fa928a13d64253bf6e
+maker   Ka'el / Claude, PHASE 1819
+breaker REQUIRED, must not be Ka'el. Unassigned at freeze time.
+rows    R1-R7 frozen. R1,R2,R3 must fail on the tree above. R4,R5,R6,R7 must pass on it.
+
+amendment 1 (R3 example corrected, row unchanged) 2026-09-16T02:05:26Z
+sha256 after amendment  7b72433f5ec7916382037e5aa195399958252e088dc8ab2b24439a0e1f09dfa4
