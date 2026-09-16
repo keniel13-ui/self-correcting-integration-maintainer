@@ -25,10 +25,29 @@ import { reduceExecution } from '../scripts/pr2/reducer.mjs';
 //   1. EXEC_ARGUMENTS_INVALID does not identify WHO produced bad arguments.
 //      The receipt shows what arrived, not whether the model, the relay, or
 //      transport corrupted it. The name is subject-neutral on purpose.
-//   2. EXEC_COMPARATOR_ERROR names the STAGE that failed, not the cause. An
-//      un-canonicalizable expectation and a genuine comparator bug are both
-//      harness-side and are not distinguishable from here. Splitting them would
-//      invent a distinction the code cannot detect.
+//   2. EXEC_COMPARATOR_ERROR names the STAGE that failed, not the ROOT CAUSE.
+//      It now means: both operands canonicalized, and the comparison still did
+//      not complete.
+//
+// CORRECTION, and it retracts what this header used to claim. The published
+// article and the earlier version of this comment said an un-canonicalizable
+// expectation and a genuine comparator bug "are not distinguishable from here,"
+// and that splitting them would invent a distinction the code cannot detect.
+// That was wrong. Vinh Nguyen (DEV 3f06i) pointed out that canonicalizing the
+// expected side separately IS the detection, and the tests below now do it:
+// EXEC_EXPECTATION_INVALID fires on our own frozen fixture, independently of
+// the arriving side.
+//
+// What survives of that claim, scoped correctly: operand isolation establishes
+// WHICH SIDE failed. It does not establish, within EXEC_EXPECTATION_INVALID,
+// whether the fixture data is invalid or the serializer has a defect. Stage,
+// operand, and root cause are three separate questions and this file answers
+// the first two.
+//
+// STILL UNSPLIT, a third site, found by Aethar this sitting: inspectPreparedTransport
+// (live.mjs:160-167) canonicalizes the expected object inside a try whose catch
+// is EXEC_COMPARATOR_ERROR, alongside the manifest digest read. Different
+// function, not Vinh's cited site, deliberately not in this commit.
 //
 // This does NOT implement args_mismatch_under_contract=<id>. The names still
 // carry no contract id, so pm25coder's point is only half addressed.
