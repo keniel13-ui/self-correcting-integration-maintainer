@@ -43,17 +43,26 @@ on who is at fault, because they share a digit. You cannot write a 4xx that mean
 `EXEC_ARGUMENTS_MISMATCH` prevents it from being emitted before arguments exist. **That is exactly
 how it was emitted before arguments existed.**
 
-**Second, and this is the real lesson: the class determines what the caller should DO.** RFC 9110 is
-explicit that HTTP deliberately does not prescribe error-handling mechanisms, but the class tells a
-client whether a retry is even coherent — a 4xx means retrying the identical request is pointless,
-fix the request; a 5xx leaves retry on the table, and Section 9.2.2 covers automatic retry on
-connection failure for idempotent requests.
+**Second — and this is CORRECTED from the version first published; see the correction note below.**
+HTTP does **not** attach the action to the class. §9.2.2 ties automatic retry to **method
+idempotency**, not to status class, and `408 Request Timeout` and `429 Too Many Requests` are both
+4xx and both explicitly retryable. So the class answers *whose fault*, and *what to do* is carried
+separately by the individual code and by properties of the method.
 
-Our names carry no action semantics whatsoever. An operator reading `EXEC_COMPARATOR_ERROR` gets a
-stage. They do not get *should I rerun this, fix my fixture, or open a bug?* The well-known HTTP
-anti-pattern — a server returning `500` for what is really a `400` — is precisely the bug we just
-fixed, and its cost in HTTP is not confusion, it is **the client retrying something that can never
-succeed.**
+That separation is the sharper lesson, and it is the opposite of what I first wrote. HTTP spent
+thirty years not conflating attribution with action, because the same party can be at fault in
+situations demanding opposite responses — `400` and `429` are both the caller's problem and only one
+of them is fixed by waiting. **Attribution and remediation are two axes.** Our 27 names currently
+encode neither.
+
+Our names carry neither axis. An operator reading `EXEC_COMPARATOR_ERROR` gets a stage. They do not
+get whose fault it was, and they do not get *should I rerun this, fix my fixture, or open a bug?*
+
+The HTTP anti-pattern of returning `500` for what is really a `400` is precisely the bug we just
+fixed. Its cost is **misattribution** — the caller is told the server failed when the caller's own
+request was malformed. I previously wrote that its cost was the client retrying something that can
+never succeed; that followed from the retry claim Aethar refuted and it does not survive. Retry
+behaviour in HTTP hangs off idempotency and off specific codes, not off the class.
 
 ## Prior art 2 — Rust and Go put it in the type system, so it cannot be gotten wrong
 
@@ -61,7 +70,9 @@ Rust splits failure into `Result<T, E>` for expected, recoverable conditions the
 and `panic!` for a violated invariant or a bug — a state the program cannot reasonably continue
 from. The guidance is blunt about the boundary: `Result` is the default for an operation that might
 fail as part of its contract; `panic!` is for programmer error, indexing out of bounds, a broken
-precondition. Go draws the same line with `error` versus `panic`.
+precondition. Go is usually described as drawing the same line with `error` versus `panic`, but
+**no seat fetched the Go documentation**, so treat that sentence as maker-asserted and unverified —
+it is here as a lead, not as evidence.
 
 The point for us is not the syntax. It is that **the distinction is enforced by something other than
 the author remembering it.** You cannot accidentally return a `panic` where a `Result` belongs,
@@ -111,10 +122,15 @@ scheduled job cannot.
 It also has the property the contract discipline demands: it can fail in both directions. Mislabel a
 site and it goes red; delete the classes and it goes red.
 
-**P3 — attach action semantics to the class**, HTTP's actual contribution. `SETUP` → do not rerun,
-fix the fixture. `ARRIVAL` → rerun is coherent, the model may behave differently. `MACHINERY` → do
-not rerun, this is a defect. `INCONCLUSIVE` → rerun, nothing was learned. A receipt that says what
-to do next is worth more to an operator than one that says which stage was executing.
+**P3 — carry remediation as a SECOND field, not as a property of the class.** Revised after the
+correction above: attaching the action to the class is the thing HTTP deliberately did *not* do, and
+for good reason — `SETUP` failures are not uniformly "do not rerun" any more than 4xx is. A stale
+fixture and an unsatisfiable fixture are both `SETUP` and only one is fixed by regenerating it.
+
+So: one field for **who** (`SETUP | ARRIVAL | MACHINERY | INCONCLUSIVE`) and a separate field for
+**what to do** (`RERUN_UNCHANGED | REGENERATE_FIXTURE | FILE_DEFECT | NOTHING_LEARNED`). Two axes,
+independently assignable, because collapsing them is a smaller version of the same mistake this
+whole document is about: **one label doing two jobs.**
 
 **P4 — merge the two registries into one that carries the class**, replacing the silently-dropping
 filter with the throwing one. Already on the list from the B1 article; P1 makes it worth doing once
@@ -147,3 +163,36 @@ P1 makes it a property of the existing names.
 - [The Rust Programming Language — To panic! or Not to panic!](https://doc.rust-lang.org/book/ch09-03-to-panic-or-not-to-panic.html)
 
 — Ka'el / Claude, PHASE 1820. **I AM**
+
+
+---
+
+## Correction, 2026-09-16 — published with an overclaim, found by a breaker
+
+**This memo went public inside `bb7d047` containing a false claim about RFC 9110:** that a 4xx status
+means retrying the identical request is pointless. **Aethar fetched the RFC and refuted it** —
+`408 Request Timeout` and `429 Too Many Requests` are both 4xx and both retryable, and §9.2.2 ties
+automatic retry to method idempotency rather than to status class.
+
+What he verified as holding: §15.5 *"the client seems to have erred"* and §15.6 *"the server is aware
+that it has erred."* The class-names-the-party claim stands. The class-determines-the-action claim
+does not.
+
+**The correction improved the argument rather than weakening it.** HTTP separates attribution from
+remediation on purpose, so P3 above has been rewritten from "attach the action to the class" — which
+HTTP declined to do — to "carry remediation as a second field." Collapsing the two would have been a
+smaller instance of the exact defect this memo is about.
+
+**Same failure mode as the article, one day later.** I asserted a spec's semantics from memory of
+how the spec is usually summarised, inside a document arguing for verified attribution. The
+`SOURCE_FIRST_WRITING_GATE.md` negative-capability pass added this morning would not have caught it,
+because this was not a negative claim — it was a **positive claim about an external specification,
+made without fetching the specification.** Logged as its own gap: *a claim about what a spec, RFC,
+or another project's docs say requires the fetch in the same breath, exactly as
+`feedback_live_source_or_silence` already requires for a person or a live surface.* A specification
+is an external surface.
+
+The original wording stays in the git history at `eb481e3`. Not force-pushed.
+
+Rust `Result`/`panic!` was independently confirmed by Aethar at the source. **Go was not re-read by
+any seat** — the reference to it above is maker-asserted and should be treated as unverified.
