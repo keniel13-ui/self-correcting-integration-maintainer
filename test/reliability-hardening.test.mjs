@@ -249,3 +249,17 @@ test('H10 a receipt dated in the future cannot bypass expiry', () => {
   assert.equal(validateReceipt(receipt(1e308), passingChecks(), now).reason, 'RECEIPT_FROM_FUTURE');
   assert.equal(validateReceipt(receipt(Number.NaN), passingChecks(), now).reason, 'NO_TIMESTAMP');
 });
+
+test('H11 a malformed Daytona id is reported as a refused shape, not an outage, with no request', async () => {
+  const { daytonaCleanupProvider } = await import('../scripts/pr2/run.mjs');
+  let requests = 0;
+  const provider = daytonaCleanupProvider({
+    apiKey: 'sentinel',
+    fetchImpl: async () => { requests += 1; return new Response(null, { status: 404 }); },
+  });
+  for (const id of ['v1:daytona:default.*', 'v1:daytona:other.12345678-1234-1234-1234-123456789abc']) {
+    await assert.rejects(provider.deleteSandbox(id), error => error.code === 'DAYTONA_SANDBOX_ID_SHAPE_REJECTED');
+    await assert.rejects(provider.observeAbsent(id), error => error.code === 'DAYTONA_SANDBOX_ID_SHAPE_REJECTED');
+  }
+  assert.equal(requests, 0);
+});
