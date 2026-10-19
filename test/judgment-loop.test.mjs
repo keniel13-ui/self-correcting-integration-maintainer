@@ -889,7 +889,9 @@ test('J13 relay transports exactly three file parts and emits only the fixed sho
   const client = new JudgmentTrueForgeClient();
   client.request = async (method, path, body) => {
     requests.push({ method, path, body });
-    return { data: { id: requests.length === 1 ? 'session-1' : 'turn-1' } };
+    return requests.length === 1
+      ? { data: { id: 'session-1', agent: { spec: { config: body.agent.spec.config } } } }
+      : { data: { id: 'turn-1' } };
   };
   assert.equal(await client.createRelaySession(s.prepared), 'session-1');
   assert.equal(
