@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint and test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.14.0 is the engines floor in package.json; 24 matches .nvmrc.
+        node: ['22.14.0', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # package.json and package-lock.json are hash-pinned (scripts/pr2/constants.mjs), so
+      # install exactly the lockfile. --ignore-scripts keeps third-party install hooks out of CI.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      # No linter dependency can be added without changing the pinned package.json, so lint is
+      # a stdlib syntax check of every tracked module plus a whitespace check.
+      - name: Lint (syntax)
+        run: git ls-files -z '*.mjs' '*.js' '*.cjs' | xargs -0 -n1 node --check
+
+      - name: Lint (whitespace)
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- scripts test
+
+      - name: Test
+        run: npm test
