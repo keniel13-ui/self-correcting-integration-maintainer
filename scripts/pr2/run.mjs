@@ -52,9 +52,11 @@ export function daytonaCleanupProvider({
   };
   const request = async (method, id) => {
     if (typeof apiKey !== 'string' || apiKey.length === 0) throw new BoundedHttpError('DAYTONA_KEY_ABSENT');
+    // The id shape guard runs outside the network try. Inside it, a rejected shape was rethrown
+    // as DAYTONA_CLEANUP_UNAVAILABLE, which misreports a refused target as an outage.
+    const path = `/api/sandbox/${encodeURIComponent(rawId(id))}${method === 'DELETE' ? '?force=true' : ''}`;
     let response;
     try {
-      const path = `/api/sandbox/${encodeURIComponent(rawId(id))}${method === 'DELETE' ? '?force=true' : ''}`;
       response = await fetchImpl(new URL(path, baseUrl), {
         method,
         headers: { Authorization: `Bearer ${apiKey}` },

@@ -84,6 +84,7 @@ export function decide(checks, decidingFields) {
 export const CANONICAL_DECIDING_FIELDS = Object.freeze(['node', 'trueforge', 'sdk']);
 
 export const RECEIPT_MAX_AGE_MS = 15 * 60 * 1000;
+export const RECEIPT_MAX_CLOCK_SKEW_MS = 60 * 1000;
 
 /**
  * A fingerprint of the world the receipt was produced in. The consumer recomputes
@@ -106,7 +107,14 @@ export function fingerprint(checks) {
  */
 export function validateReceipt(receipt, currentChecks, now = Date.now()) {
   if (!receipt || typeof receipt !== 'object') return { valid: false, reason: 'RECEIPT_ABSENT' };
-  if (typeof receipt.generated_at !== 'number') return { valid: false, reason: 'NO_TIMESTAMP' };
+  if (typeof receipt.generated_at !== 'number' || !Number.isFinite(receipt.generated_at)) {
+    return { valid: false, reason: 'NO_TIMESTAMP' };
+  }
+  // A timestamp ahead of the clock never ages, so a hand-edited receipt dated in the future
+  // would pass the expiry check forever. The receipt may not set the terms of its own freshness.
+  if (receipt.generated_at - now > RECEIPT_MAX_CLOCK_SKEW_MS) {
+    return { valid: false, reason: 'RECEIPT_FROM_FUTURE', ahead_ms: receipt.generated_at - now };
+  }
   if (now - receipt.generated_at > RECEIPT_MAX_AGE_MS) {
     return { valid: false, reason: 'RECEIPT_EXPIRED', age_ms: now - receipt.generated_at };
   }
@@ -141,8 +149,16 @@ export function validateReceipt(receipt, currentChecks, now = Date.now()) {
  * AbortSignal.timeout(NaN) throws RangeError, so a typo in an env var crashed the
  * smoke check instead of bounding it.
  */
+export const MAX_TIMER_MS = 2_147_483_647;
+
+/* Follow-up: a finite value is not yet a usable delay. AbortSignal.timeout throws RangeError
+ * above 4294967295 ms (so "1e20" still crashed every request), Node timers silently clamp
+ * anything above 2147483647 ms to 1 ms (an immediate DEADLINE_EXCEEDED), and "0.5" floored to
+ * 0 ms aborted at once. Only an integer in [1, MAX_TIMER_MS] is honoured. */
 export function parseTimeout(raw, fallback = 10_000) {
   const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) return { ms: fallback, source: 'FALLBACK' };
-  return { ms: Math.floor(value), source: 'ENV' };
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_TIMER_MS) {
+    return { ms: fallback, source: 'FALLBACK' };
+  }
+  return { ms: value, source: 'ENV' };
 }

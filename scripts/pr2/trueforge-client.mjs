@@ -1,3 +1,5 @@
+import { canonicalJsonBytes } from './canonical.mjs';
+
 export class BoundedHttpError extends Error {
   constructor(code, status = 0) {
     super(`${code}:${status}`);
@@ -7,8 +9,65 @@ export class BoundedHttpError extends Error {
   }
 }
 
+export const DEFAULT_TRUEFORGE_BASE_URL = 'http://127.0.0.1:8790';
+
+// Relay sessions receive model-authored candidate bytes as file parts, so they are a prompt
+// injection surface. TrueForge 0.1.4 materializes every omitted RuntimeConfig field from its
+// schema defaults (trueforge-core agent-session/schemas/agentSpec.mjs), and those defaults
+// enable dynamic subagents, generative UI, ask_user_question, sandbox file downloads, history
+// compaction, and large-tool-response offloading. The PR2 contract (section 4, step 4) requires
+// subagents and file downloads to be "disabled or absent", so every field is stated here.
+export const RELAY_SESSION_CONFIG = Object.freeze({
+  iteration_limit: 3,
+  sandbox: Object.freeze({ enabled: true, file_downloads: false }),
+  dynamic_sub_agents: Object.freeze({ enabled: false }),
+  context_management: Object.freeze({
+    compaction: Object.freeze({ enabled: false }),
+    large_tool_response: Object.freeze({ enabled: false }),
+  }),
+  generative_ui: Object.freeze({ enabled: false }),
+  ask_user_questions: Object.freeze({ enabled: false }),
+});
+
+/**
+ * Fails closed unless TrueForge echoes back exactly the relay config that was requested. The
+ * judgment session already does this for its own config; without it a server that ignored or
+ * rewrote a disabled capability would hand the relay model more authority than requested.
+ */
+export function assertReturnedRelaySessionConfig(config) {
+  let actual;
+  try {
+    actual = canonicalJsonBytes(config);
+  } catch {
+    throw new BoundedHttpError('RELAY_SESSION_CONFIG_MALFORMED', 422);
+  }
+  if (config === null || typeof config !== 'object' || !actual.equals(canonicalJsonBytes(RELAY_SESSION_CONFIG))) {
+    throw new BoundedHttpError('RELAY_SESSION_CONFIG_MISMATCH', 422);
+  }
+  return config;
+}
+
+/**
+ * The harness location. TRUEFORGE_BASE_URL is the variable .env.example and the smoke check
+ * already use; before this, the live clients ignored it, so a smoke run could report
+ * TRUEFORGE_READY against one harness while the live run silently targeted another.
+ */
+export function resolveTrueForgeBaseUrl(raw = process.env.TRUEFORGE_BASE_URL) {
+  if (raw === undefined || raw === '') return DEFAULT_TRUEFORGE_BASE_URL;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new TypeError('TRUEFORGE_BASE_URL must be an absolute http(s) URL');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new TypeError('TRUEFORGE_BASE_URL must be an absolute http(s) URL without credentials');
+  }
+  return url.href;
+}
+
 export class TrueForgeClient {
-  constructor({ baseUrl = 'http://127.0.0.1:8790', fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  constructor({ baseUrl = resolveTrueForgeBaseUrl(), fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
     this.baseUrl = baseUrl;
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
@@ -72,13 +131,23 @@ export class TrueForgeClient {
             'This is a bounded execution relay. Call truefoundry-system exec exactly once. ' +
             `Use this exact JSON argument object without changing one byte of command: ${exactArguments}. ` +
             'Do not call any other tool. After the tool response, return only EXECUTION_RELAY_COMPLETE.',
-          config: { iteration_limit: 3, sandbox: { enabled: true } },
+          config: RELAY_SESSION_CONFIG,
         },
       },
     });
     const id = body?.data?.id;
     if (typeof id !== 'string' || id.length === 0) throw new BoundedHttpError('SESSION_ID_ABSENT');
+    await this.assertRelaySessionConfig(id, body);
     return id;
+  }
+
+  async assertRelaySessionConfig(sessionId, body) {
+    try {
+      assertReturnedRelaySessionConfig(body?.data?.agent?.spec?.config);
+    } catch (error) {
+      await this.cancelSession(sessionId);
+      throw error;
+    }
   }
 
   async createTurn(sessionId, executionRequest, expectedExecArguments, timeoutMs) {

@@ -3,7 +3,7 @@ import { canonicalJsonBytes, parseStrictJson, assertClosedObject } from '../pr2/
 import { cleanupSandboxes, createdSandboxIds } from '../pr2/cleanup.mjs';
 import { sha256 } from '../pr2/inputs.mjs';
 import { daytonaCleanupProvider } from '../pr2/run.mjs';
-import { BoundedHttpError, TrueForgeClient } from '../pr2/trueforge-client.mjs';
+import { BoundedHttpError, RELAY_SESSION_CONFIG, TrueForgeClient } from '../pr2/trueforge-client.mjs';
 import {
   JUDGMENT_RESPONSE_FORMAT,
   JUDGMENT_SESSION_CONFIG,
@@ -221,11 +221,13 @@ export class JudgmentTrueForgeClient extends TrueForgeClient {
             'Call truefoundry-system exec exactly once with this exact JSON argument object: ' +
             `${JSON.stringify(expectedArguments)}. Do not call any other tool. ` +
             'After the response return only VERIFICATION_RELAY_COMPLETE.',
-          config: { iteration_limit: 3, sandbox: { enabled: true } },
+          config: RELAY_SESSION_CONFIG,
         },
       },
     });
-    return requireId(body, 'SESSION_ID_ABSENT');
+    const sessionId = requireId(body, 'SESSION_ID_ABSENT');
+    await this.assertRelaySessionConfig(sessionId, body);
+    return sessionId;
   }
 
   async assertDaytonaSandboxProvider() {
@@ -481,11 +483,13 @@ export function reduceCandidateVerification({
   cleanup,
   preflight = [],
   outboundArtifacts = inspectPreparedTransport(prepared).outbound_artifacts,
+  cleanupOwnershipUnobserved = false,
   sessionId = '',
   turnId = '',
 }) {
   const failures = new Set(preflight);
   const preflightBlocked = preflight.length > 0;
+  if (cleanupOwnershipUnobserved) failures.add('CLEANUP_UNCONFIRMED');
   if (!Array.isArray(events)) events = [];
   const sandboxEvents = events.filter(event => event?.type === 'sandbox.created');
   const sandboxIds = createdSandboxIds(events);
@@ -607,9 +611,15 @@ export async function runCandidateVerification({
       outboundArtifacts: inspection.outbound_artifacts,
     });
   }
+  // A relay failure after the session exists (a poll timeout, an unreachable harness, a rejected
+  // turn) must not skip sandbox cleanup. Before this, the error propagated out of the finally
+  // block and cleanupSandboxes below never ran, so a Daytona sandbox holding model-authored
+  // candidate bytes could outlive the run with no CLEANUP_UNCONFIRMED recorded anywhere.
+  let turnRequestStarted = false;
   try {
     sessionId = await client.createRelaySession(prepared);
     const deadline = Date.now() + MAX_SANDBOX_TURN_MS;
+    turnRequestStarted = true;
     turnId = await client.createRelayTurn(
       sessionId,
       prepared,
@@ -617,10 +627,17 @@ export async function runCandidateVerification({
     );
     const turn = await pollTurn(client, sessionId, turnId, deadline);
     turnStatus = turn?.state?.status ?? 'error';
+  } catch {
+    turnStatus = 'error';
   } finally {
     if (sessionId && turnId) observed = await observeEvents(client, sessionId, turnId);
     if ((!observed.observed || turnStatus !== 'done') && sessionId) await client.cancelSession(sessionId);
   }
+  // Sandbox ownership is unknowable when a turn may exist but its events were not retrieved, or
+  // when the turn request was sent and no turn id came back. Absence of observed sandboxes is
+  // then not evidence that none were created.
+  const cleanupOwnershipUnobserved = Boolean(sessionId) && turnRequestStarted &&
+    (turnId === '' || !observed.observed);
   const createdIds = createdSandboxIds(observed.events);
   const cleanup = await cleanupSandboxes({
     createdIds,
@@ -633,6 +650,7 @@ export async function runCandidateVerification({
     turnStatus,
     prepared,
     cleanup,
+    cleanupOwnershipUnobserved,
     sessionId,
     turnId,
   });
