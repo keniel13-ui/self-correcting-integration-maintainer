@@ -74,8 +74,20 @@ npm run trueforge        # http://127.0.0.1:8790, ~25s cold start
 **3. Configure providers**
 
 In the TrueForge UI at `http://127.0.0.1:8790`, add a model provider and a Daytona sandbox
-provider. Keys entered here live in TrueForge, not in this repository. **No key is ever read from,
-written to, or committed by this project.**
+provider. Keys entered here live in TrueForge, not in this repository. No key is ever written to or
+committed by this project.
+
+**One exception is read from the environment:** the live runners delete the Daytona sandbox they
+created by calling Daytona directly, and that cleanup reads `DAYTONA_API_KEY` from the process
+environment (`daytonaCleanupProvider` in `scripts/pr2/run.mjs`). Without it, deletion cannot be
+confirmed, every live run records `CLEANUP_UNCONFIRMED`, and no proposal can be created. Export it
+in the shell that runs the loop; never put it in a tracked file.
+
+> **Port check.** TrueForge listens on `localhost`, which can resolve to IPv6 `::1`. If another
+> process already holds IPv4 `127.0.0.1:8790`, requests to `127.0.0.1` reach that process instead
+> (observed: `/healthz returned 404`). Check with `lsof -nP -iTCP:8790 -sTCP:LISTEN`.
+> `npm run smoke:trueforge` honours `TRUEFORGE_BASE_URL`; the live runners on `main` always use
+> `http://127.0.0.1:8790`.
 
 **4. Prove the harness end to end**
 
@@ -116,6 +128,35 @@ or required.
 > superseded by a later delta rather than rewritten. The raw run output is committed verbatim at
 > `docs/freezes/link4-stock-run-artifact.txt`, SHA-256 `c2e535fa…`, and carries the session id,
 > turn id, sandbox id, tool call, and `exitCode: 0`.
+
+## Running the loop
+
+Both live runners need a running TrueForge with a model provider and a Daytona provider
+configured, plus `DAYTONA_API_KEY` exported for cleanup (see Setup). Each one costs model tokens
+and Daytona time.
+
+```bash
+# Judgment loop: inspect a sealed corpus against a frozen prior, verify one repair in Daytona.
+node scripts/judgment/run.mjs \
+  --corpus <corpus dir> --manifest <corpus manifest.json> --prior <PRIOR_KNOWLEDGE.json> \
+  [--runs <output dir>]          # default: docs/demo/runs
+
+# Re-derive one finding offline from a written run directory (no network).
+node <run dir>/recompute/scripts/judgment/recompute.mjs --run <run dir> --finding F-001
+
+# PR2 execution surface: run the pinned maker fixture once in Daytona (writes to .pr2-runs/).
+node scripts/pr2/run.mjs
+```
+
+The judgment runner prints one canonical JSON outcome. Exit `0` means `BREAKER_PENDING` or
+`NO_FINDINGS`. Any failure prints `SCAN_DID_NOT_COMPLETE` with a reason and exits `1`. A prior
+must carry the exact instruction, tool-surface, and corpus-manifest hashes for the run, so a prior
+cannot be reused for a different corpus. Run 004's corpus and prior are published in
+[`docs/freezes/run-004-corpus/`](docs/freezes/run-004-corpus/) and
+[`docs/contracts/PRIOR_KNOWLEDGE_RUN_004.json`](docs/contracts/PRIOR_KNOWLEDGE_RUN_004.json).
+
+More detail: [architecture](docs/ARCHITECTURE.md), [local development](docs/DEVELOPMENT.md),
+[contributing](CONTRIBUTING.md).
 
 ## Build discipline
 
